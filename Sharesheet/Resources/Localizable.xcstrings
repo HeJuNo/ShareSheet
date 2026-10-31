@@ -1,7 +1,133 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Add tags" : {
+      "extractionState" : "manual"
+    },
+    "All" : {
+      "extractionState" : "manual"
+    },
+    "All tags" : {
+      "extractionState" : "manual"
+    },
+    "Article" : {
+      "extractionState" : "manual"
+    },
+    "Audio" : {
+      "extractionState" : "manual"
+    },
+    "Available" : {
+      "extractionState" : "manual"
+    },
+    "Book" : {
+      "extractionState" : "manual"
+    },
+    "Cancel" : {
+      "extractionState" : "manual"
+    },
+    "Capture pending" : {
+      "extractionState" : "manual"
+    },
+    "Capture pending now (%lld)" : {
+      "extractionState" : "manual"
+    },
+    "Collection" : {
+      "extractionState" : "manual"
+    },
+    "Collections" : {
+      "extractionState" : "manual"
+    },
+    "Create" : {
+      "extractionState" : "manual"
+    },
+    "Delete" : {
+      "extractionState" : "manual"
+    },
+    "Delete this item?" : {
+      "extractionState" : "manual"
+    },
+    "Document" : {
+      "extractionState" : "manual"
+    },
+    "Done" : {
+      "extractionState" : "manual"
+    },
+    "Favorite" : {
+      "extractionState" : "manual"
+    },
+    "Favorites" : {
+      "extractionState" : "manual"
+    },
+    "Filter by tag" : {
+      "extractionState" : "manual"
+    },
+    "Filters" : {
+      "extractionState" : "manual"
+    },
+    "Highlights" : {
+      "extractionState" : "manual"
+    },
+    "Image" : {
+      "extractionState" : "manual"
+    },
+    "Link" : {
+      "extractionState" : "manual"
+    },
+    "Name" : {
+      "extractionState" : "manual"
+    },
+    "New collection" : {
+      "extractionState" : "manual"
+    },
+    "New collection…" : {
+      "extractionState" : "manual"
+    },
+    "No items" : {
+      "extractionState" : "manual"
+    },
+    "Rebuild index" : {
+      "extractionState" : "manual"
+    },
+    "Search" : {
+      "extractionState" : "manual"
+    },
+    "Settings" : {
+      "extractionState" : "manual"
+    },
     "Sharesheet" : {
+      "extractionState" : "manual"
+    },
+    "Tag" : {
+      "extractionState" : "manual"
+    },
+    "Tags" : {
+      "extractionState" : "manual"
+    },
+    "Text" : {
+      "extractionState" : "manual"
+    },
+    "Top level" : {
+      "extractionState" : "manual"
+    },
+    "Unavailable" : {
+      "extractionState" : "manual"
+    },
+    "Unfavorite" : {
+      "extractionState" : "manual"
+    },
+    "Unsorted" : {
+      "extractionState" : "manual"
+    },
+    "Version" : {
+      "extractionState" : "manual"
+    },
+    "Video" : {
+      "extractionState" : "manual"
+    },
+    "iCloud Drive" : {
+      "extractionState" : "manual"
+    },
+    "iCloud unavailable" : {
       "extractionState" : "manual"
     }
   },
