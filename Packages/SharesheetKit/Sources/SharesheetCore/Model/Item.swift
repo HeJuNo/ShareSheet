@@ -85,3 +85,40 @@ public struct Item: Equatable, Sendable {
         self.extraBody = extraBody
     }
 }
+
+/// Everything needed to create a new item; the store assigns the id, file names and attachments.
+public struct ItemDraft: Sendable {
+    public var type: ItemType
+    public var url: URL?
+    public var title: String
+    public var description: String?
+    public var tags: [String]
+    public var favorite: Bool
+    public var note: String
+    public var content: String?
+    public var highlights: [String]
+    public var created: Date
+    /// Local file to copy into `_attachments`.
+    public var fileSource: URL?
+    public var previewImageSource: URL?
+
+    public init(
+        type: ItemType, url: URL? = nil, title: String, description: String? = nil,
+        tags: [String] = [], favorite: Bool = false, note: String = "", content: String? = nil,
+        highlights: [String] = [], created: Date = Date(), fileSource: URL? = nil,
+        previewImageSource: URL? = nil
+    ) {
+        self.type = type
+        self.url = url
+        self.title = title
+        self.description = description
+        self.tags = tags
+        self.favorite = favorite
+        self.note = note
+        self.content = content
+        self.highlights = highlights
+        self.created = created
+        self.fileSource = fileSource
+        self.previewImageSource = previewImageSource
+    }
+}
