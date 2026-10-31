@@ -140,7 +140,7 @@ private actor Worker {
         var item = Item(
             id: ItemID(relativePath: ""), type: draft.type, url: draft.url, file: file, title: draft.title,
             description: draft.description, tags: draft.tags, favorite: draft.favorite,
-            created: created, image: image, note: draft.note, content: draft.content,
+            created: created, image: image, capture: draft.capture, note: draft.note, content: draft.content,
             highlights: draft.highlights)
         let base = FileNamer.sanitize(draft.title)
         // The name is re-picked when another process takes it between naming and writing.

@@ -265,3 +265,10 @@ private func mkdir(_ root: URL, _ path: String) throws {
         _ = try await store.item(ItemID(relativePath: "../x.md"))
     }
 }
+
+@Test func createWritesDraftCaptureState() async throws {
+    let (store, _) = try makeStore()
+    let item = try await store.create(.fixture(capture: .pending), in: .unsorted)
+    #expect(item.capture == .pending)
+    #expect(try await store.item(item.id).capture == .pending)
+}

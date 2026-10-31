@@ -132,3 +132,109 @@ private func importer(_ inbox: Inbox, _ store: any ItemStore) -> InboxImporter {
     #expect(items.first { $0.title == "Link" }?.capture == .pending)
     #expect(items.first { $0.title == "File" }?.capture == nil)
 }
+
+@Test func multiEntryRetryResumesWithoutDuplicates() async throws {
+    let (inbox, _) = try makeInbox()
+    let (real, _) = try makeStore()
+    let names = ["a.pdf", "b.pdf", "c.pdf"]
+    var files: [String: URL] = [:]
+    for name in names { files[name] = try tempFile(named: name, bytes: 4) }
+    try inbox.enqueue(
+        .fixture(
+            entries: names.map { .fixture(type: .document, url: nil, title: $0, fileName: $0) },
+            collection: .root, newCollectionName: "Share"),
+        files: files)
+    let store = FlakyStore(base: real, failingCall: 2)
+    let first = await importer(inbox, store).importAll()
+    #expect(first.failed == 1 && first.imported.count == 1)
+    let second = await importer(inbox, store).importAll()
+    #expect(second.failed == 0 && second.imported.count == 2)
+    let collections = try await real.collections().filter { $0 != .unsorted }
+    #expect(collections == [CollectionPath(components: ["Share"])])
+    #expect(try await real.listItems().count == 3)
+    #expect(try inbox.pending().isEmpty)
+}
+
+@Test func linkIsCreatedPendingInOneWrite() async throws {
+    let (inbox, _) = try makeInbox()
+    let (store, _) = try makeStore()
+    try inbox.enqueue(.fixture(), files: [:])
+    _ = await importer(inbox, store).importAll()
+    #expect(try await store.listItems().map(\.capture) == [.pending])
+}
+
+@Test func failedInboxRemovalDoesNotReimport() async throws {
+    let (inbox, root) = try makeInbox()
+    let (store, _) = try makeStore()
+    try inbox.enqueue(.fixture(), files: [:])
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
+    let first = await importer(inbox, store).importAll()
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+    #expect(first.imported.count == 1 && first.cleanupFailed == 1)
+    let second = await importer(inbox, store).importAll()
+    #expect(second.imported.isEmpty && second.cleanupFailed == 0)
+    #expect(try await store.listItems().count == 1)
+    #expect(try inbox.pending().isEmpty)
+}
+
+@Test func corruptRequestIsCountedAndLeftUntouched() async throws {
+    let (inbox, root) = try makeInbox()
+    let (store, _) = try makeStore()
+    let dir = root.appending(path: "bad")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try Data("{nope".utf8).write(to: dir.appending(path: "request.json"))
+    let report = await importer(inbox, store).importAll()
+    #expect(report.unreadable == 1)
+    #expect(FileManager.default.fileExists(atPath: dir.appending(path: "request.json").path))
+}
+
+@Test func unreadableInboxRootCountsAsFailed() async throws {
+    let file = try tempFile(named: "notadir", bytes: 1)
+    let (store, _) = try makeStore()
+    let report = await importer(Inbox(root: file), store).importAll()
+    #expect(report.failed >= 1)
+}
+
+@Test func multiEntryRequestWithExistingItemIsNormalShare() async throws {
+    let (inbox, _) = try makeInbox()
+    let (store, _) = try makeStore()
+    let existing = try await store.create(.fixture(title: "Old"), in: .unsorted)
+    try inbox.enqueue(
+        .fixture(
+            entries: [.fixture(title: "A"), .fixture(title: "B")], collection: .root,
+            newCollectionName: "S", existingItem: existing.id),
+        files: [:])
+    let report = await importer(inbox, store).importAll()
+    #expect(report.imported.count == 2)
+    #expect(try await store.listItems().count == 3)
+}
+
+@Test func reshareFailureDoesNotFallBackToCreate() async throws {
+    let (inbox, _) = try makeInbox()
+    let (real, _) = try makeStore()
+    let existing = try await real.create(.fixture(), in: .unsorted)
+    try inbox.enqueue(.fixture(existingItem: existing.id, edits: SheetEdits(note: "n")), files: [:])
+    let store = FlakyStore(base: real, failingCall: 0)
+    store.updateFails = true
+    let report = await importer(inbox, store).importAll()
+    #expect(report.failed == 1 && report.imported.isEmpty)
+    #expect(try await real.listItems().count == 1)
+    #expect(try inbox.pending().count == 1)
+}
+
+@Test func fileEntriesAreNeverPendingCapture() async throws {
+    let (inbox, _) = try makeInbox()
+    let (store, _) = try makeStore()
+    let file = try tempFile(named: "f.pdf", bytes: 4)
+    try inbox.enqueue(.fixture(entries: [.fixture(type: .document, fileName: "f.pdf")]), files: ["f.pdf": file])
+    _ = await importer(inbox, store).importAll()
+    #expect(try await store.listItems().first?.capture == nil)
+}
+
+@Test func enqueueRejectsUnsafeFileNames() throws {
+    let (inbox, _) = try makeInbox()
+    let file = try tempFile(named: "x", bytes: 1)
+    for name in ["request.json", "progress.json", "a/b", "..", "../x", ""] {
+        #expect(throws: InboxError.self) { try inbox.enqueue(.fixture(), files: [name: file]) }
+    }
+}

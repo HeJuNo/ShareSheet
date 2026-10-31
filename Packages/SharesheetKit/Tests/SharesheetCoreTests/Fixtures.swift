@@ -44,12 +44,13 @@ extension ItemDraft {
         highlights: [String] = [],
         created: Date = ISO8601DateFormatter().date(from: "2026-10-31T20:44:00Z")!,
         fileSource: URL? = nil,
-        previewImageSource: URL? = nil
+        previewImageSource: URL? = nil,
+        capture: CaptureState? = nil
     ) -> ItemDraft {
         ItemDraft(
             type: type, url: url, title: title, description: description, tags: tags,
             favorite: favorite, note: note, content: content, highlights: highlights,
-            created: created, fileSource: fileSource, previewImageSource: previewImageSource)
+            created: created, fileSource: fileSource, previewImageSource: previewImageSource, capture: capture)
     }
 }
 
@@ -145,6 +146,49 @@ struct UnavailableStore: ItemStore {
         throw StoreError.unavailable
     }
     func update(_ item: Item) async throws -> Item { try await base.update(item) }
+    func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item {
+        try await base.move(id, to: collection)
+    }
+    func delete(_ id: ItemID) async throws { try await base.delete(id) }
+    func addAttachment(from source: URL, preferredName: String) async throws -> String {
+        try await base.addAttachment(from: source, preferredName: preferredName)
+    }
+    func attachmentURL(_ relativePath: String) async throws -> URL {
+        try await base.attachmentURL(relativePath)
+    }
+    func collections() async throws -> [CollectionPath] { try await base.collections() }
+    func createCollection(named name: String, in parent: CollectionPath) async throws -> CollectionPath {
+        try await base.createCollection(named: name, in: parent)
+    }
+    func deleteCollection(_ path: CollectionPath, moveItemsTo destination: CollectionPath?) async throws {
+        try await base.deleteCollection(path, moveItemsTo: destination)
+    }
+    func changes() -> AsyncStream<Void> { base.changes() }
+}
+
+/// Wraps a real store; the `failingCall`-th `create` (1-based) throws `.unavailable` once.
+final class FlakyStore: ItemStore, @unchecked Sendable {
+    let base: any ItemStore
+    let failingCall: Int
+    var updateFails = false
+    private let lock = NSLock()
+    private var calls = 0
+    init(base: any ItemStore, failingCall: Int) {
+        self.base = base
+        self.failingCall = failingCall
+    }
+    func listItems() async throws -> [Item] { try await base.listItems() }
+    func item(_ id: ItemID) async throws -> Item { try await base.item(id) }
+    func findItem(url: URL) async throws -> Item? { try await base.findItem(url: url) }
+    func create(_ draft: ItemDraft, in collection: CollectionPath) async throws -> Item {
+        let call = lock.withLock { () -> Int in calls += 1; return calls }
+        if call == failingCall { throw StoreError.unavailable }
+        return try await base.create(draft, in: collection)
+    }
+    func update(_ item: Item) async throws -> Item {
+        if updateFails { throw StoreError.notFound(item.id.relativePath) }
+        return try await base.update(item)
+    }
     func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item {
         try await base.move(id, to: collection)
     }

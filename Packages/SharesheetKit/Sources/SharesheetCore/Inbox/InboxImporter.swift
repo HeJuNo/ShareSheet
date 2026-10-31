@@ -1,17 +1,33 @@
 import Foundation
 
 public struct ImportReport: Equatable, Sendable {
+    /// Items written by this run (entries finished by an earlier run are not repeated).
     public var imported: [ItemID]
+    /// Requests that could not be imported and stay in the inbox.
     public var failed: Int
+    /// Requests whose `request.json` exists but cannot be decoded; left untouched.
+    public var unreadable: Int
+    /// Requests fully imported whose inbox directory could not be removed.
+    public var cleanupFailed: Int
 
-    public init(imported: [ItemID] = [], failed: Int = 0) {
+    public init(imported: [ItemID] = [], failed: Int = 0, unreadable: Int = 0, cleanupFailed: Int = 0) {
         self.imported = imported
         self.failed = failed
+        self.unreadable = unreadable
+        self.cleanupFailed = cleanupFailed
     }
 }
 
-/// Moves pending inbox requests into the store. A request leaves the inbox only after every entry is written.
+/// Moves pending inbox requests into the store. A request leaves the inbox only after every entry is written;
+/// progress is persisted per request, so a retry resumes instead of duplicating.
 public struct InboxImporter: Sendable {
+    static let progressFileName = "progress.json"
+
+    private struct Progress: Codable {
+        var collection: CollectionPath?
+        var done: [String: String] = [:]
+    }
+
     private let inbox: Inbox
     private let store: any ItemStore
 
@@ -22,11 +38,18 @@ public struct InboxImporter: Sendable {
 
     public func importAll() async -> ImportReport {
         var report = ImportReport()
-        guard let pending = try? inbox.pending() else { return report }
-        for (request, directory) in pending {
+        let scan: (requests: [(request: ShareRequest, directory: URL)], unreadable: Int)
+        do {
+            scan = try inbox.scan()
+        } catch {
+            report.failed = 1
+            return report
+        }
+        report.unreadable = scan.unreadable
+        for (request, directory) in scan.requests {
             do {
-                report.imported += try await importRequest(request, directory: directory)
-                try? inbox.remove(request.id)
+                try await importRequest(request, directory: directory, created: &report.imported)
+                do { try inbox.remove(request.id) } catch { report.cleanupFailed += 1 }
             } catch StoreError.unavailable {
                 report.failed += 1
                 break
@@ -37,24 +60,46 @@ public struct InboxImporter: Sendable {
         return report
     }
 
-    private func importRequest(_ request: ShareRequest, directory: URL) async throws -> [ItemID] {
-        if let existing = request.existingItem, let entry = request.entries.first {
+    private func importRequest(
+        _ request: ShareRequest, directory: URL, created: inout [ItemID]
+    ) async throws {
+        var progress = loadProgress(directory)
+
+        // A re-share only applies to a single entry.
+        var reshareTarget: ItemID?
+        if request.entries.count == 1, progress.done["0"] == nil, let existing = request.existingItem {
             do {
-                return [try await reshare(request, entry: entry, existing: existing)]
+                _ = try await store.item(existing)
+                reshareTarget = existing
             } catch StoreError.notFound {
                 // The item was deleted meanwhile; import it as new.
             }
         }
+        if let existing = reshareTarget {
+            let id = try await reshare(request, entry: request.entries[0], existing: existing)
+            progress.done["0"] = id.relativePath
+            try saveProgress(progress, directory)
+            created.append(id)
+            return
+        }
+
         var target = request.collection
         if request.entries.count > 1 {
-            target = try await store.createCollection(
-                named: request.newCollectionName ?? "Share", in: request.collection)
+            if let saved = progress.collection {
+                target = saved
+            } else {
+                target = try await store.createCollection(
+                    named: request.newCollectionName ?? "Share", in: request.collection)
+                progress.collection = target
+                try saveProgress(progress, directory)
+            }
         }
-        var ids: [ItemID] = []
-        for entry in request.entries {
-            ids.append(try await create(entry, request: request, directory: directory, in: target))
+        for (index, entry) in request.entries.enumerated() where progress.done["\(index)"] == nil {
+            let id = try await create(entry, request: request, directory: directory, in: target)
+            progress.done["\(index)"] = id.relativePath
+            try saveProgress(progress, directory)
+            created.append(id)
         }
-        return ids
     }
 
     private func reshare(_ request: ShareRequest, entry: ShareEntry, existing: ItemID) async throws -> ItemID {
@@ -70,18 +115,30 @@ public struct InboxImporter: Sendable {
     private func create(
         _ entry: ShareEntry, request: ShareRequest, directory: URL, in collection: CollectionPath
     ) async throws -> ItemID {
+        let isWebLink = entry.url != nil && entry.type != .text && entry.fileName == nil
         let draft = ItemDraft(
             type: entry.type, url: entry.url, title: entry.title, description: entry.description,
             tags: request.tags, favorite: request.favorite, note: request.note,
             content: entry.content, highlights: entry.highlight.map { [$0] } ?? [],
             created: request.created,
             fileSource: entry.fileName.map { directory.appending(path: $0) },
-            previewImageSource: entry.previewImageName.map { directory.appending(path: $0) })
-        var item = try await store.create(draft, in: collection)
-        if entry.url != nil, entry.type != .text {
-            item.capture = .pending
-            item = try await store.update(item)
-        }
-        return item.id
+            previewImageSource: entry.previewImageName.map { directory.appending(path: $0) },
+            capture: isWebLink ? .pending : nil)
+        return try await store.create(draft, in: collection).id
+    }
+
+    private func loadProgress(_ directory: URL) -> Progress {
+        let url = directory.appending(path: Self.progressFileName)
+        guard let data = try? Data(contentsOf: url),
+            let progress = try? JSONDecoder().decode(Progress.self, from: data)
+        else { return Progress() }
+        return progress
+    }
+
+    private func saveProgress(_ progress: Progress, _ directory: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(progress).write(
+            to: directory.appending(path: Self.progressFileName), options: .atomic)
     }
 }

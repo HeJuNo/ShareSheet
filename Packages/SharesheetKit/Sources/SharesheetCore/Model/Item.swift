@@ -101,13 +101,15 @@ public struct ItemDraft: Sendable {
     /// Local file to copy into `_attachments`.
     public var fileSource: URL?
     public var previewImageSource: URL?
+    public var capture: CaptureState?
 
     public init(
         type: ItemType, url: URL? = nil, title: String, description: String? = nil,
         tags: [String] = [], favorite: Bool = false, note: String = "", content: String? = nil,
         highlights: [String] = [], created: Date = Date(), fileSource: URL? = nil,
-        previewImageSource: URL? = nil
+        previewImageSource: URL? = nil, capture: CaptureState? = nil
     ) {
+        self.capture = capture
         self.type = type
         self.url = url
         self.title = title
