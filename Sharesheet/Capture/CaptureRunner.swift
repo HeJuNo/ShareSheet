@@ -40,6 +40,8 @@ actor CaptureRunner {
         return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
 
+    private enum Outcome { case done, failed, cancelled, gone }
+
     private func capturePending(limit: Int?) async -> (done: Int, failed: Int) {
         guard let all = try? await store.listItems() else { return (0, 0) }
         var pending = all.filter { $0.capture == .pending }.sorted { $0.created < $1.created }
@@ -47,7 +49,12 @@ actor CaptureRunner {
         var done = 0, failed = 0
         for item in pending {
             if Task.isCancelled { break }
-            if await process(item) { done += 1 } else { failed += 1 }
+            switch await process(item) {
+            case .done: done += 1
+            case .failed: failed += 1
+            case .gone: continue
+            case .cancelled: return (done, failed)
+            }
         }
         return (done, failed)
     }
@@ -57,33 +64,38 @@ actor CaptureRunner {
         _ = await process(item)
     }
 
-    /// Returns true when both screenshot and archive were saved.
-    private func process(_ item: Item) async -> Bool {
-        var updated = item
+    /// `.done` only when both screenshot and archive were saved. A cancelled capture leaves the item untouched;
+    /// an item deleted or moved meanwhile (`.gone`) is neither written nor indexed.
+    private func process(_ item: Item) async -> Outcome {
+        var screenshot: String?, archive: String?, archiveText: String?, iconURL: URL?
         var succeeded = false
-        var archiveText: String?
 
         if let url = item.url {
             do {
                 let snapshot = try await capturer.capture(url)
-                updated.screenshot = try await saveAttachment(snapshot.png, for: item, ext: "png")
+                try Task.checkCancellation()
+                screenshot = try await saveAttachment(snapshot.png, for: item, ext: "png")
                 let html = try await archiver.archive(html: snapshot.domHTML, baseURL: snapshot.finalURL)
-                updated.archive = try await saveAttachment(Data(html.utf8), for: item, ext: "html")
+                try Task.checkCancellation()
+                archive = try await saveAttachment(Data(html.utf8), for: item, ext: "html")
                 archiveText = ArchiveText.extract(fromHTML: html)
+                iconURL = snapshot.iconURL
                 succeeded = true
-                await storeFavicon(host: url.host(), iconURL: snapshot.iconURL)
             } catch {
-                succeeded = false
+                if error is CancellationError || Task.isCancelled { return .cancelled }
             }
         }
 
-        updated.capture = succeeded ? .done : .failed
-        let saved = (try? await store.update(updated)) ?? updated
+        // Re-read so edits made while capturing survive; only the capture fields are ours to change.
+        guard var fresh = try? await store.item(item.id) else { return .gone }
+        if let screenshot { fresh.screenshot = screenshot }
+        if let archive { fresh.archive = archive }
+        fresh.capture = succeeded ? .done : .failed
+        guard let saved = try? await store.update(fresh) else { return .gone }
         try? index.upsert(saved)
-        if let archive = saved.archive, let archiveText {
-            try? index.setArchiveText(archiveText, forArchive: archive)
-        }
-        return succeeded
+        if let archive, let archiveText { try? index.setArchiveText(archiveText, forArchive: archive) }
+        if succeeded { await storeFavicon(host: item.url?.host(), iconURL: iconURL) }
+        return succeeded ? .done : .failed
     }
 
     private func saveAttachment(_ data: Data, for item: Item, ext: String) async throws -> String {

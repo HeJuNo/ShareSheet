@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Busy page</title>
+<script>
+  // Blocks the page's main thread shortly after load, so every later script evaluation stalls.
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      var end = Date.now() + 8000;
+      while (Date.now() < end) {}
+    }, 50);
+  });
+</script>
+</head>
+<body><p>Busy.</p></body>
+</html>

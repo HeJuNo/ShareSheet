@@ -113,6 +113,10 @@ targets:
           - Fixtures
       - path: SharesheetTests/Fixtures/long-page.html
         buildPhase: resources
+      - path: SharesheetTests/Fixtures/busy-page.html
+        buildPhase: resources
+      - path: SharesheetTests/Fixtures/redirect-page.html
+        buildPhase: resources
     dependencies:
       - target: Sharesheet
     settings:

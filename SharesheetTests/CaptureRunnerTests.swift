@@ -9,18 +9,72 @@ private let tinyPNG: Data = UIGraphicsImageRenderer(size: CGSize(width: 2, heigh
     ctx.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
 }
 
+/// Lets a test hold the fake capturer mid-capture and know when it got there.
+private actor Gate {
+    private var entered = false
+    private var isOpen = false
+    private var enterWaiters: [CheckedContinuation<Void, Never>] = []
+    private var openWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func enter() {
+        entered = true
+        enterWaiters.forEach { $0.resume() }
+        enterWaiters = []
+    }
+
+    func pass() async {
+        enter()
+        if isOpen { return }
+        await withCheckedContinuation { openWaiters.append($0) }
+    }
+
+    func waitUntilEntered() async {
+        if entered { return }
+        await withCheckedContinuation { enterWaiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        openWaiters.forEach { $0.resume() }
+        openWaiters = []
+    }
+}
+
 private final class FakeCapturer: PageCapturing, @unchecked Sendable {
+    enum Behavior {
+        case succeed
+        case fail(CaptureError)
+        /// Waits at the gate, then succeeds.
+        case wait(Gate)
+        /// Signals the gate, then sleeps until cancelled.
+        case hangUntilCancelled(Gate)
+    }
+
     private let lock = NSLock()
     private var _captured: [URL] = []
-    let error: CaptureError?
+    private let behavior: Behavior
+    private let failing: Set<URL>
 
-    init(error: CaptureError? = nil) { self.error = error }
+    init(_ behavior: Behavior = .succeed, failing: Set<URL> = []) {
+        self.behavior = behavior
+        self.failing = failing
+    }
+
+    convenience init(error: CaptureError) { self.init(.fail(error)) }
 
     var captured: [URL] { lock.withLock { _captured } }
 
     @MainActor func capture(_ url: URL) async throws -> PageSnapshot {
         lock.withLock { _captured.append(url) }
-        if let error { throw error }
+        if failing.contains(url) { throw CaptureError.timeout }
+        switch behavior {
+        case .succeed: break
+        case .fail(let error): throw error
+        case .wait(let gate): await gate.pass()
+        case .hangUntilCancelled(let gate):
+            await gate.enter()
+            try await Task.sleep(for: .seconds(600))
+        }
         return PageSnapshot(
             png: tinyPNG, domHTML: "<html><body><p>lorem ipsum</p></body></html>", finalURL: url,
             iconURL: URL(string: "https://example.com/icon.png"), truncated: false)
@@ -49,12 +103,14 @@ private struct Env {
             archiver: HTMLArchiver(fetcher: StubFetcher()), favicons: FaviconFetcher(fetcher: StubFetcher()))
     }
 
-    func makeItem(_ title: String, capture: CaptureState?, created: Date = Date()) async throws -> Item {
+    func makeItem(
+        _ title: String, capture: CaptureState?, created: Date = Date(), indexed: Bool = true
+    ) async throws -> Item {
         let item = try await store.create(
             ItemDraft(type: .link, url: URL(string: "https://example.com/\(title)"), title: title,
                       created: created, capture: capture),
             in: .unsorted)
-        try index.upsert(item)
+        if indexed { try index.upsert(item) }
         return item
     }
 }
@@ -155,5 +211,84 @@ struct CaptureRunnerTests {
 
         #expect(capturer.captured.isEmpty)
         #expect(try await env.store.item(note.id).capture == nil)
+    }
+
+    @Test func runnerContinuesAfterTimeout() async throws {
+        let env = try Env()
+        let now = Date()
+        let slow = try await env.makeItem("slow", capture: .pending, created: now.addingTimeInterval(-60))
+        let fast = try await env.makeItem("fast", capture: .pending, created: now)
+        let capturer = FakeCapturer(failing: [try #require(slow.url)])
+
+        let result = await env.runner(capturer).runPending()
+
+        #expect(result.done == 1)
+        #expect(result.failed == 1)
+        #expect(capturer.captured == [slow.url, fast.url])
+        #expect(try await env.store.item(slow.id).capture == .failed)
+        #expect(try await env.store.item(fast.id).capture == .done)
+    }
+
+    @Test func cancelledRunLeavesItemsPending() async throws {
+        let env = try Env()
+        let now = Date()
+        let first = try await env.makeItem("first", capture: .pending, created: now.addingTimeInterval(-60))
+        let second = try await env.makeItem("second", capture: .pending, created: now)
+        let gate = Gate()
+        let capturer = FakeCapturer(.hangUntilCancelled(gate))
+        let runner = env.runner(capturer)
+
+        let run = Task { await runner.runPending() }
+        await gate.waitUntilEntered()
+        run.cancel()
+        let result = await run.value
+
+        #expect(result.done == 0)
+        #expect(result.failed == 0)
+        #expect(capturer.captured == [first.url])
+        #expect(try await env.store.item(first.id).capture == .pending)
+        #expect(try await env.store.item(second.id).capture == .pending)
+        #expect(try env.index.search(LibraryQuery(scope: .all)).allSatisfy { $0.capture == .pending })
+    }
+
+    @Test func editsMadeDuringCaptureSurvive() async throws {
+        let env = try Env()
+        let item = try await env.makeItem("edited", capture: .pending)
+        let gate = Gate()
+        let runner = env.runner(FakeCapturer(.wait(gate)))
+
+        let run = Task { await runner.runPending() }
+        await gate.waitUntilEntered()
+        var edited = try await env.store.item(item.id)
+        edited.note = "written while capturing"
+        edited.tags = ["kept"]
+        _ = try await env.store.update(edited)
+        await gate.open()
+        let result = await run.value
+
+        #expect(result.done == 1)
+        let saved = try await env.store.item(item.id)
+        #expect(saved.note == "written while capturing")
+        #expect(saved.tags == ["kept"])
+        #expect(saved.capture == .done)
+        #expect(saved.screenshot != nil)
+        #expect(saved.archive != nil)
+    }
+
+    @Test func itemDeletedDuringCaptureIsNotIndexed() async throws {
+        let env = try Env()
+        let item = try await env.makeItem("deleted", capture: .pending, indexed: false)
+        let gate = Gate()
+        let runner = env.runner(FakeCapturer(.wait(gate)))
+
+        let run = Task { await runner.runPending() }
+        await gate.waitUntilEntered()
+        try await env.store.delete(item.id)
+        await gate.open()
+        let result = await run.value
+
+        #expect(result.done == 0)
+        #expect(try env.index.search(LibraryQuery(scope: .all)).contains { $0.id == item.id } == false)
+        #expect(try await env.store.listItems().contains { $0.id == item.id } == false)
     }
 }
