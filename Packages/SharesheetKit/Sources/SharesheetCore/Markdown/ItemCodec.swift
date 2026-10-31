@@ -68,13 +68,27 @@ public enum ItemCodec {
 
         var values: [String: String] = [:]
         var extra: [String] = []
-        for raw in all[1..<end] {
-            let line = stripCR(raw)
+        var blockTags: [String]?
+        var index = 1
+        while index < end {
+            let line = stripCR(all[index])
+            index += 1
             if let colon = line.firstIndex(of: ":"),
                let first = line.first, !first.isWhitespace, first != "#", first != "-",
                knownKeys.contains(String(line[..<colon])) {
-                values[String(line[..<colon])] = String(line[line.index(after: colon)...])
-                    .trimmingCharacters(in: .whitespaces)
+                let key = String(line[..<colon])
+                let value = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+                if key == "tags", value.isEmpty {
+                    var items: [String] = []
+                    while index < end {
+                        let next = stripCR(all[index]).trimmingCharacters(in: .whitespaces)
+                        guard next == "-" || next.hasPrefix("- ") else { break }
+                        items.append(try scalar(String(next.dropFirst()), key: "tags"))
+                        index += 1
+                    }
+                    if !items.isEmpty { blockTags = items }
+                }
+                values[key] = value
             } else {
                 extra.append(line)
             }
@@ -111,7 +125,7 @@ public enum ItemCodec {
 
         var item = Item(
             id: id, type: type, url: url, file: try optional("file"), title: try required("title"),
-            description: try optional("description"), tags: try tags(values["tags"]),
+            description: try optional("description"), tags: try blockTags ?? tags(values["tags"]),
             favorite: favorite, created: created, image: try optional("image"),
             screenshot: try optional("screenshot"), archive: try optional("archive"),
             capture: capture, extraFrontmatter: extra)
@@ -121,7 +135,9 @@ public enum ItemCodec {
         if body.first == "" { body.removeFirst() }
 
         var pre = body
-        if let h = body.firstIndex(of: highlightsHeading) {
+        if let h = body.lastIndex(of: highlightsHeading),
+           let firstNonBlank = body[(h + 1)...].first(where: { !$0.isEmpty }),
+           firstNonBlank.hasPrefix(">") {
             pre = Array(body[..<h])
             var i = h + 1
             var highlights: [String] = []
@@ -145,7 +161,7 @@ public enum ItemCodec {
         if type == .text {
             if main == noteHeading || main.hasPrefix("\(noteHeading)\n\n") {
                 item.note = trimNewlines(String(main.dropFirst(noteHeading.count)))
-            } else if let r = main.range(of: "\n\n\(noteHeading)\n\n") {
+            } else if let r = main.range(of: "\n\n\(noteHeading)\n\n", options: .backwards) {
                 item.content = String(main[..<r.lowerBound])
                 item.note = trimNewlines(String(main[r.upperBound...]))
             } else if main.hasSuffix("\n\n\(noteHeading)") {

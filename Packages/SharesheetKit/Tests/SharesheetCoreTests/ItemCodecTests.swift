@@ -47,3 +47,18 @@ import Testing
     let item = Item.fixture(highlights: ["first line\nsecond line"])
     #expect(try ItemCodec.decode(ItemCodec.encode(item), id: item.id).highlights == ["first line\nsecond line"])
 }
+@Test func decodesBlockStyleTags() throws {
+    let text = "---\ntype: link\nurl: \"https://a.b/\"\ntitle: \"T\"\ntags:\n  - a\n  - \"b\"\nfavorite: false\ncreated: 2026-10-31T20:44:00Z\n---\n"
+    let item = try ItemCodec.decode(text, id: ItemID(relativePath: "Unsorted/T.md"))
+    #expect(item.tags == ["a", "b"] && item.extraFrontmatter.isEmpty)
+    let out = ItemCodec.encode(item)
+    #expect(out.contains("tags: [\"a\", \"b\"]\n") && !out.contains("  - "))
+}
+@Test func noteContainingHighlightsHeadingRoundTrips() throws {
+    let item = Item.fixture(note: "a\n\n## Highlights\n\nnot a quote")
+    #expect(try ItemCodec.decode(ItemCodec.encode(item), id: item.id) == item)
+}
+@Test func textContentContainingNoteHeadingRoundTrips() throws {
+    let item = Item.fixture(type: .text, url: nil, content: "x\n\n## Note\n\ny", note: "z")
+    #expect(try ItemCodec.decode(ItemCodec.encode(item), id: item.id) == item)
+}
