@@ -1,0 +1,129 @@
+# Build (the repo may live on an exFAT volume: keep build products off it, skip codesign for simulator builds):
+#   xcodegen generate
+#   xcodebuild build -project Sharesheet.xcodeproj -scheme Sharesheet -destination 'platform=iOS Simulator,name=iPhone 17e' CODE_SIGNING_ALLOWED=NO
+#   xcodebuild test  -project Sharesheet.xcodeproj -scheme Sharesheet -destination 'platform=iOS Simulator,name=iPhone 17e' CODE_SIGNING_ALLOWED=NO
+#   swift test --package-path Packages/SharesheetKit --scratch-path ~/Library/Caches/SharesheetKit-build
+name: Sharesheet
+options:
+  bundleIdPrefix: com.luetgendorf
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    DEVELOPMENT_TEAM: ""
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+packages:
+  SharesheetKit:
+    path: Packages/SharesheetKit
+targets:
+  Sharesheet:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sharesheet
+    dependencies:
+      - package: SharesheetKit
+        product: SharesheetCore
+      - package: SharesheetKit
+        product: SharesheetUI
+      - target: SharesheetShare
+        embed: true
+    entitlements:
+      path: Sharesheet/Sharesheet.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.luetgendorf.Sharesheet]
+        com.apple.developer.icloud-container-identifiers: [iCloud.com.luetgendorf.Sharesheet]
+        com.apple.developer.ubiquity-container-identifiers: [iCloud.com.luetgendorf.Sharesheet]
+        com.apple.developer.icloud-services: [CloudDocuments]
+    info:
+      path: Sharesheet/Info.plist
+      properties:
+        CFBundleDisplayName: Sharesheet
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSUbiquitousContainers:
+          iCloud.com.luetgendorf.Sharesheet:
+            NSUbiquitousContainerIsDocumentScopePublic: true
+            NSUbiquitousContainerName: Sharesheet
+            NSUbiquitousContainerSupportedFolderLevels: Any
+        BGTaskSchedulerPermittedIdentifiers: [com.luetgendorf.Sharesheet.capture]
+        UIBackgroundModes: [processing]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.luetgendorf.Sharesheet
+        GENERATE_INFOPLIST_FILE: NO
+  SharesheetShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: SharesheetShare
+        excludes:
+          - Preprocess.js
+      - path: SharesheetShare/Preprocess.js
+        buildPhase: resources
+      - path: Sharesheet/Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    dependencies:
+      - package: SharesheetKit
+        product: SharesheetCore
+      - package: SharesheetKit
+        product: SharesheetUI
+    entitlements:
+      path: SharesheetShare/SharesheetShare.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.luetgendorf.Sharesheet]
+        com.apple.developer.icloud-container-identifiers: [iCloud.com.luetgendorf.Sharesheet]
+        com.apple.developer.ubiquity-container-identifiers: [iCloud.com.luetgendorf.Sharesheet]
+        com.apple.developer.icloud-services: [CloudDocuments]
+    info:
+      path: SharesheetShare/Info.plist
+      properties:
+        CFBundleDisplayName: Sharesheet
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionJavaScriptPreprocessingFile: Preprocess
+            NSExtensionActivationRule: |-
+              SUBQUERY(extensionItems, $e, SUBQUERY($e.attachments, $a,
+                ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.url" OR
+                ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.plain-text" OR
+                ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.image" OR
+                ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.movie" OR
+                ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audio" OR
+                ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.data"
+              ).@count >= 1).@count >= 1
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.luetgendorf.Sharesheet.Share
+        GENERATE_INFOPLIST_FILE: NO
+  SharesheetTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SharesheetTests
+    dependencies:
+      - target: Sharesheet
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.luetgendorf.Sharesheet.Tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Sharesheet.app/Sharesheet
+        BUNDLE_LOADER: $(TEST_HOST)
+schemes:
+  Sharesheet:
+    build:
+      targets:
+        Sharesheet: all
+        SharesheetShare: all
+        SharesheetTests: [test]
+    test:
+      targets:
+        - SharesheetTests
