@@ -32,6 +32,24 @@ public struct IndexedItem: Identifiable, Equatable, Sendable {
     public var capture: CaptureState?
     public var favorite: Bool
     public var hasHighlights: Bool
+
+    public init(
+        id: ItemID, type: ItemType, title: String, url: URL? = nil, domain: String? = nil,
+        file: String? = nil, tags: [String] = [], created: Date, capture: CaptureState? = nil,
+        favorite: Bool = false, hasHighlights: Bool = false
+    ) {
+        self.id = id
+        self.type = type
+        self.title = title
+        self.url = url
+        self.domain = domain
+        self.file = file
+        self.tags = tags
+        self.created = created
+        self.capture = capture
+        self.favorite = favorite
+        self.hasHighlights = hasHighlights
+    }
 }
 
 public struct LibraryCounts: Equatable, Sendable {
@@ -39,6 +57,8 @@ public struct LibraryCounts: Equatable, Sendable {
     public var byType: [ItemType: Int] = [:]
     /// Nested counts roll up into every ancestor.
     public var byCollection: [CollectionPath: Int] = [:]
+
+    public init() {}
 }
 
 /// Rebuildable SQLite index of the Markdown library. Written by the app, opened read-only by the share extension.
@@ -56,7 +76,8 @@ public final class LibraryIndex: Sendable {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { db in
             try db.create(table: "items") { t in
-                t.primaryKey("id", .text)
+                t.autoIncrementedPrimaryKey("key")
+                t.column("id", .text).notNull().unique()
                 t.column("type", .text).notNull()
                 t.column("title", .text).notNull()
                 t.column("url", .text)
@@ -75,7 +96,7 @@ public final class LibraryIndex: Sendable {
             try db.create(index: "items_created", on: "items", columns: ["created"])
             try db.create(index: "items_collection", on: "items", columns: ["collection"])
             try db.create(table: "item_tags") { t in
-                t.column("item_id", .text).notNull().references("items", onDelete: .cascade)
+                t.column("item_id", .text).notNull().references("items", column: "id", onDelete: .cascade)
                 t.column("tag", .text).notNull()
                 t.column("position", .integer).notNull()
             }
@@ -129,8 +150,8 @@ public final class LibraryIndex: Sendable {
             try db.execute(
                 sql: "INSERT INTO archive_text(archive, text) VALUES (?, ?) ON CONFLICT(archive) DO UPDATE SET text = excluded.text",
                 arguments: [path, text])
-            let rowids = try Int64.fetchAll(db, sql: "SELECT rowid FROM items WHERE archive = ?", arguments: [path])
-            for rowid in rowids { try Self.refreshFTS(rowid: rowid, db) }
+            let keys = try Int64.fetchAll(db, sql: "SELECT key FROM items WHERE archive = ?", arguments: [path])
+            for key in keys { try Self.refreshFTS(key: key, db) }
         }
     }
 
@@ -157,7 +178,7 @@ public final class LibraryIndex: Sendable {
             var args = StatementArguments()
 
             if let match = Self.ftsExpression(query.text) {
-                sql += " JOIN items_fts ON items_fts.rowid = items.rowid"
+                sql += " JOIN items_fts ON items_fts.rowid = items.key"
                 conditions.append("items_fts MATCH ?")
                 args += [match]
             }
@@ -175,7 +196,8 @@ public final class LibraryIndex: Sendable {
                 if !path.components.isEmpty {
                     let name = path.relativePath
                     conditions.append("(items.collection = ? OR substr(items.collection, 1, ?) = ?)")
-                    args += [name, name.count + 1, name + "/"]
+                    // SQLite substr counts code points, not grapheme clusters.
+                    args += [name, name.unicodeScalars.count + 1, name + "/"]
                 }
             }
             if let tag = query.tag {
@@ -210,9 +232,9 @@ public final class LibraryIndex: Sendable {
         try pool.read { db in
             var counts = LibraryCounts()
             let row = try Row.fetchOne(db, sql: """
-                SELECT COUNT(*) AS n, COALESCE(SUM(collection = 'Unsorted'), 0) AS u,
+                SELECT COUNT(*) AS n, COALESCE(SUM(collection = ?), 0) AS u,
                        COALESCE(SUM(favorite), 0) AS f, COALESCE(SUM(has_highlights), 0) AS h FROM items
-                """)!
+                """, arguments: [CollectionPath.unsorted.relativePath])!
             counts.all = row["n"]; counts.unsorted = row["u"]
             counts.favorites = row["f"]; counts.highlights = row["h"]
             for r in try Row.fetchAll(db, sql: "SELECT type, COUNT(*) AS n FROM items GROUP BY type") {
@@ -260,29 +282,30 @@ public final class LibraryIndex: Sendable {
                 item.id.collection.relativePath, item.note, item.description,
                 item.highlights.joined(separator: "\n"), item.archive,
             ])
+        let key = db.lastInsertedRowID
         for (position, tag) in item.tags.enumerated() {
             try db.execute(
                 sql: "INSERT INTO item_tags(item_id, tag, position) VALUES (?, ?, ?)", arguments: [id, tag, position])
         }
-        try refreshFTS(rowid: db.lastInsertedRowID, db)
+        try refreshFTS(key: key, db)
     }
 
     private static func delete(_ id: ItemID, _ db: Database) throws {
-        if let rowid = try Int64.fetchOne(db, sql: "SELECT rowid FROM items WHERE id = ?", arguments: [id.relativePath]) {
-            try db.execute(sql: "DELETE FROM items_fts WHERE rowid = ?", arguments: [rowid])
+        if let key = try Int64.fetchOne(db, sql: "SELECT key FROM items WHERE id = ?", arguments: [id.relativePath]) {
+            try db.execute(sql: "DELETE FROM items_fts WHERE rowid = ?", arguments: [key])
         }
         try db.execute(sql: "DELETE FROM item_tags WHERE item_id = ?", arguments: [id.relativePath])
         try db.execute(sql: "DELETE FROM items WHERE id = ?", arguments: [id.relativePath])
     }
 
-    private static func refreshFTS(rowid: Int64, _ db: Database) throws {
-        try db.execute(sql: "DELETE FROM items_fts WHERE rowid = ?", arguments: [rowid])
+    private static func refreshFTS(key: Int64, _ db: Database) throws {
+        try db.execute(sql: "DELETE FROM items_fts WHERE rowid = ?", arguments: [key])
         try db.execute(sql: """
             INSERT INTO items_fts(rowid, title, note, description, url, highlights, archive_text)
-            SELECT items.rowid, items.title, items.note, COALESCE(items.description, ''), COALESCE(items.url, ''),
+            SELECT items.key, items.title, items.note, COALESCE(items.description, ''), COALESCE(items.url, ''),
                    items.highlights, COALESCE((SELECT text FROM archive_text WHERE archive = items.archive), '')
-            FROM items WHERE items.rowid = ?
-            """, arguments: [rowid])
+            FROM items WHERE items.key = ?
+            """, arguments: [key])
     }
 
     private static func domain(of url: URL?) -> String? {

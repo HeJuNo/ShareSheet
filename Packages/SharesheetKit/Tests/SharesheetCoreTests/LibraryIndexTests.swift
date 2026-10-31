@@ -130,4 +130,24 @@ import Testing
         try index.replaceAll(with: [])
         #expect(try index.favicon(host: "a.b") == Data([1, 2]))
     }
+
+    @Test func collectionScopeHandlesUnicodeNamesAndSiblingPrefixes() throws {
+        let index = try LibraryIndex(path: tempDB())
+        let nfd = "Cafe\u{301}", emoji = "\u{1F600}\u{1F44D}"
+        try index.replaceAll(with: [
+            .fixture(id: "\(nfd)/A.md"), .fixture(id: "\(nfd)/Sub/B.md"),
+            .fixture(id: "\(emoji)/C.md"), .fixture(id: "\(emoji)/Sub/D.md"),
+            .fixture(id: "Billa/E.md"), .fixture(id: "Billa2/F.md"), .fixture(id: "Bill_/G.md"),
+        ])
+        #expect(Set(ids(try index.search(.init(scope: .collection(CollectionPath(components: [nfd])))))) == ["\(nfd)/A.md", "\(nfd)/Sub/B.md"])
+        #expect(Set(ids(try index.search(.init(scope: .collection(CollectionPath(components: [emoji])))))) == ["\(emoji)/C.md", "\(emoji)/Sub/D.md"])
+        #expect(ids(try index.search(.init(scope: .collection(CollectionPath(components: ["Billa"]))))) == ["Billa/E.md"])
+    }
+
+    @Test func publicInitializersExist() {
+        let counts = LibraryCounts()
+        #expect(counts.all == 0 && counts.byType.isEmpty)
+        let item = IndexedItem(id: ItemID(relativePath: "A/B.md"), type: .link, title: "t", created: .distantPast)
+        #expect(item.tags.isEmpty && !item.favorite && item.url == nil)
+    }
 }
