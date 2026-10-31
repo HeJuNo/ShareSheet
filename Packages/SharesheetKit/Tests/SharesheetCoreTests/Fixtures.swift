@@ -208,3 +208,7 @@ final class FlakyStore: ItemStore, @unchecked Sendable {
     }
     func changes() -> AsyncStream<Void> { base.changes() }
 }
+
+func tempDB() -> URL {
+    FileManager.default.temporaryDirectory.appending(path: "index-\(UUID().uuidString).sqlite")
+}
