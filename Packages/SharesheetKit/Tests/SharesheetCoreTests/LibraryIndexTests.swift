@@ -111,6 +111,20 @@ import Testing
         #expect(try reader.search(.init(text: "t", scope: .all)).count == 1)
     }
 
+    @Test func itemIDForURLIgnoresTrackingParameters() throws {
+        let path = tempDB()
+        let writer = try LibraryIndex(path: path)
+        try writer.replaceAll(with: [
+            .fixture(id: "Unsorted/A.md", url: URL(string: "https://www.example.com/a?utm_source=feed&id=1")!),
+            .fixture(id: "Unsorted/B.md", url: URL(string: "https://example.com/b")!),
+            .fixture(id: "Unsorted/C.md", url: nil),
+        ])
+        let reader = try LibraryIndex(path: path, readOnly: true)
+        #expect(try reader.itemID(forURL: URL(string: "https://www.example.com/a?id=1&fbclid=z")!) == ItemID(relativePath: "Unsorted/A.md"))
+        #expect(try reader.itemID(forURL: URL(string: "https://example.com/b?si=q")!) == ItemID(relativePath: "Unsorted/B.md"))
+        #expect(try reader.itemID(forURL: URL(string: "https://example.com/missing")!) == nil)
+    }
+
     @Test func readOnlyFailsWhenMissing() {
         #expect(throws: (any Error).self) { try LibraryIndex(path: tempDB(), readOnly: true) }
     }

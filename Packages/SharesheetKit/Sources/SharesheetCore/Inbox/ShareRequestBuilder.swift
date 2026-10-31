@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 /// One thing handed to the share extension.
 public enum SharedInput: Sendable {
-    case url(URL, pageTitle: String?, selection: String?)
+    case url(URL, pageTitle: String?, selection: String?, description: String? = nil)
     case text(String)
     /// A local copy of a shared file; `name` is the original file name.
     case file(URL, contentType: UTType, name: String)
@@ -49,29 +49,43 @@ public enum ShareRequestBuilder {
     private static let reservedNames: Set<String> = ["request.json", "progress.json", previewImageName]
 
     /// Collapses the redundant attachments apps send with a link: the same URL twice (compared after
-    /// cleaning) and a caption or title as text. Several distinct links, or files, are kept as they are.
-    public static func normalized(_ inputs: [SharedInput]) -> [SharedInput] {
+    /// cleaning) is kept once, and text sent along with links (and no files) is not an item of its own:
+    /// it becomes the title of a single untitled link, otherwise it is returned as `note`.
+    /// Several distinct links, or files, are kept as they are.
+    public static func normalized(_ inputs: [SharedInput]) -> (inputs: [SharedInput], note: String?) {
         var result: [SharedInput] = []
         var seen: [URL: Int] = [:]
         for input in inputs {
-            guard case .url(let url, let pageTitle, let selection) = input else {
+            guard case .url(let url, let pageTitle, let selection, let description) = input else {
                 result.append(input)
                 continue
             }
             let key = URLCleaner.clean(url)
-            if let index = seen[key], case .url(let first, let firstTitle, let firstSelection) = result[index] {
-                result[index] = .url(first, pageTitle: firstTitle ?? pageTitle, selection: firstSelection ?? selection)
+            if let index = seen[key], case .url(let first, let title, let firstSelection, let firstDescription) = result[index] {
+                result[index] = .url(
+                    first, pageTitle: title ?? pageTitle, selection: firstSelection ?? selection,
+                    description: firstDescription ?? description)
             } else {
                 seen[key] = result.count
                 result.append(input)
             }
         }
-        let hasURL = !seen.isEmpty
         let hasFile = result.contains { if case .file = $0 { true } else { false } }
-        if hasURL && !hasFile {
-            result.removeAll { if case .text = $0 { true } else { false } }
+        guard !seen.isEmpty, !hasFile else { return (result, nil) }
+
+        var texts: [String] = []
+        result.removeAll { input in
+            guard case .text(let text) = input else { return false }
+            if let trimmed = nonBlank(text), !seen.keys.contains(where: { $0.absoluteString == trimmed }),
+               URL(string: trimmed).map({ seen[URLCleaner.clean($0)] == nil }) ?? true {
+                texts.append(trimmed)
+            }
+            return true
         }
-        return result
+        if result.count == 1, case .url(let url, nil, let selection, let description) = result[0], !texts.isEmpty {
+            result[0] = .url(url, pageTitle: texts.removeFirst(), selection: selection, description: description)
+        }
+        return (result, texts.isEmpty ? nil : texts.joined(separator: "\n\n"))
     }
 
     public static func initialState(
@@ -84,12 +98,12 @@ public enum ShareRequestBuilder {
         }
         var state: SheetState
         switch inputs.first {
-        case .url(let url, let pageTitle, let selection):
+        case .url(let url, let pageTitle, let selection, let description):
             let cleaned = URLCleaner.clean(url)
             state = SheetState(
                 type: ItemType.preset(for: cleaned),
                 title: nonBlank(pageTitle) ?? cleaned.host ?? cleaned.absoluteString,
-                highlight: nonBlank(selection), url: cleaned)
+                description: nonBlank(description), highlight: nonBlank(selection), url: cleaned)
         case .text(let text):
             state = SheetState(type: .text, title: firstLine(text))
         case .file(_, let contentType, let name):
@@ -100,7 +114,7 @@ public enum ShareRequestBuilder {
         if let existing {
             state.type = existing.type
             state.title = existing.title
-            state.description = existing.description
+            state.description = existing.description ?? state.description
             state.note = existing.note
             state.tags = existing.tags
             state.favorite = existing.favorite
@@ -144,12 +158,12 @@ public enum ShareRequestBuilder {
             let typeOverride = state.type != initial.type ? state.type : nil
             for input in inputs {
                 switch input {
-                case .url(let url, let pageTitle, let selection):
+                case .url(let url, let pageTitle, let selection, let description):
                     let cleaned = URLCleaner.clean(url)
                     entries.append(ShareEntry(
                         type: typeOverride ?? ItemType.preset(for: cleaned),
                         url: cleaned, title: nonBlank(pageTitle) ?? cleaned.host ?? cleaned.absoluteString,
-                        highlight: nonBlank(selection)))
+                        description: nonBlank(description), highlight: nonBlank(selection)))
                 case .text(let text):
                     entries.append(ShareEntry(type: typeOverride ?? .text, title: firstLine(text), content: text))
                 case .file(let source, let contentType, let name):
@@ -189,7 +203,7 @@ public enum ShareRequestBuilder {
 
     private static func preset(_ input: SharedInput) -> ItemType {
         switch input {
-        case .url(let url, _, _): ItemType.preset(for: URLCleaner.clean(url))
+        case .url(let url, _, _, _): ItemType.preset(for: URLCleaner.clean(url))
         case .text: .text
         case .file(_, let contentType, _): ItemType.preset(forContentType: contentType)
         }

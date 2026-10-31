@@ -36,6 +36,7 @@ struct ShareFormView: View {
                 Image(systemName: "xmark")
             }
             .accessibilityLabel(Text("Cancel"))
+            .disabled(model.isSaving)
         }
         ToolbarItem(placement: .principal) {
             typeMenu
@@ -92,10 +93,20 @@ struct ShareFormView: View {
                     .foregroundStyle(.red)
                 }
             }
+            if model.failedCount > 0 {
+                Section {
+                    Label {
+                        Text("\(model.failedCount) items couldn’t be loaded")
+                    } icon: {
+                        Image(systemName: "exclamationmark.circle")
+                    }
+                    .foregroundStyle(.orange)
+                }
+            }
             cardSection
             collectionSection
             Section("Tags") {
-                TagField(tags: $model.state.tags, suggestions: model.tagSuggestions)
+                TagField(tags: $model.state.tags, suggestions: model.tagSuggestions, pending: $model.pendingTag)
             }
             if let highlight = model.state.highlight {
                 Section("Highlights") {

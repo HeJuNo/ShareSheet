@@ -21,9 +21,10 @@ struct SharedPayloadLoader {
         try? FileManager.default.removeItem(at: temporaryDirectory)
     }
 
-    func load(_ items: [NSExtensionItem]) async throws -> [SharedInput] {
-        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    /// The loaded inputs and how many attachments could not be read.
+    func load(_ items: [NSExtensionItem]) async -> (inputs: [SharedInput], failed: Int) {
         var inputs: [SharedInput] = []
+        var failed = 0
         for item in items {
             let providers = item.attachments ?? []
             if let safari = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.propertyList.identifier) }),
@@ -33,43 +34,66 @@ struct SharedPayloadLoader {
             }
             for provider in providers {
                 // One unreadable attachment must not lose the others.
-                if let input = try? await load(provider) { inputs.append(input) }
+                do {
+                    if let input = try await load(provider) { inputs.append(input) }
+                } catch {
+                    failed += 1
+                }
             }
         }
-        return inputs
+        return (inputs, failed)
     }
 
     // MARK: Attachments
 
+    /// Returns nil for attachments that are not items of their own (Safari's property list).
     private func load(_ provider: NSItemProvider) async throws -> SharedInput? {
-        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+        let kind = PayloadClassifier.kind(
+            registeredTypes: provider.registeredTypeIdentifiers, suggestedName: provider.suggestedName)
+        switch kind {
+        case .skip:
+            return nil
+        case .fileURL:
             return try await loadFileURL(provider)
-        }
-        if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-            return try await loadObject(URL.self, from: provider).map { .url($0, pageTitle: nil, selection: nil) }
-        }
-        if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
-            guard let text = try await loadObject(String.self, from: provider) else { return nil }
+        case .url:
+            guard let url = try await loadObject(URL.self, from: provider) else { throw LoadError.empty }
+            return .url(url, pageTitle: nil, selection: nil)
+        case .text:
+            guard let text = try await loadObject(String.self, from: provider) else { throw LoadError.empty }
             if let url = Self.webURL(text) { return .url(url, pageTitle: nil, selection: nil) }
+            if PayloadClassifier.isTooLargeForText(text) { return try saveText(text, name: provider.suggestedName) }
             return .text(text)
+        case .file:
+            guard let type = provider.registeredContentTypes.first else { throw LoadError.empty }
+            return try await loadFile(provider, type: type)
         }
-        guard let type = provider.registeredContentTypes.first else { return nil }
-        return try await loadFile(provider, type: type)
     }
 
-    /// Safari's preprocessing results: `url`, `title` and `selection` from Preprocess.js.
+    /// Text too large for an in-memory snippet becomes a `.txt` file.
+    private func saveText(_ text: String, name: String?) throws -> SharedInput {
+        let directory = makeFileDirectory()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileName = (name.flatMap { $0.isEmpty ? nil : $0.replacingOccurrences(of: "/", with: "-") } ?? "Text") + ".txt"
+        let destination = directory.appending(path: fileName)
+        try text.write(to: destination, atomically: true, encoding: .utf8)
+        return .file(destination, contentType: .plainText, name: fileName)
+    }
+
+    /// Safari's preprocessing results: `url`, `title`, `selection` and `description` from Preprocess.js.
     private func loadSafariPage(_ provider: NSItemProvider) async throws -> SharedInput? {
-        let page: (url: URL, title: String?, selection: String?)? = try await withCheckedThrowingContinuation { continuation in
+        let page: (url: URL, title: String?, selection: String?, description: String?)? = try await withCheckedThrowingContinuation { continuation in
             provider.loadItem(forTypeIdentifier: UTType.propertyList.identifier, options: nil) { item, error in
                 if let error { return continuation.resume(throwing: error) }
                 let results = (item as? NSDictionary)?[NSExtensionJavaScriptPreprocessingResultsKey] as? NSDictionary
                 guard let string = results?["url"] as? String, let url = URL(string: string) else {
                     return continuation.resume(returning: nil)
                 }
-                continuation.resume(returning: (url, results?["title"] as? String, results?["selection"] as? String))
+                continuation.resume(returning: (
+                    url, results?["title"] as? String, results?["selection"] as? String,
+                    results?["description"] as? String))
             }
         }
-        return page.map { .url($0.url, pageTitle: $0.title, selection: $0.selection) }
+        return page.map { .url($0.url, pageTitle: $0.title, selection: $0.selection, description: $0.description) }
     }
 
     private func loadObject<T: _ObjectiveCBridgeable & Sendable>(_ type: T.Type, from provider: NSItemProvider) async throws -> T?
@@ -88,7 +112,7 @@ struct SharedPayloadLoader {
         return try await withCheckedThrowingContinuation { continuation in
             _ = provider.loadObject(ofClass: URL.self) { url, error in
                 if let error { return continuation.resume(throwing: error) }
-                guard let url, url.isFileURL else { return continuation.resume(returning: nil) }
+                guard let url, url.isFileURL else { return continuation.resume(throwing: LoadError.empty) }
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                 do {
@@ -112,7 +136,7 @@ struct SharedPayloadLoader {
         return try await withCheckedThrowingContinuation { continuation in
             _ = provider.loadFileRepresentation(for: type, openInPlace: false) { url, _, error in
                 if let error { return continuation.resume(throwing: error) }
-                guard let url else { return continuation.resume(returning: nil) }
+                guard let url else { return continuation.resume(throwing: LoadError.empty) }
                 do {
                     let name = Self.fileName(suggested: suggestedName, source: url, type: type)
                     let destination = destinationDirectory.appending(path: name)
@@ -151,4 +175,8 @@ struct SharedPayloadLoader {
         else { return nil }
         return url
     }
+}
+
+private enum LoadError: Error {
+    case empty
 }

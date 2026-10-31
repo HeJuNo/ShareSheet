@@ -142,13 +142,35 @@ private func file(_ name: String, type: UTType = .jpeg) -> SharedInput {
     let url = URL(string: "https://example.com/a")!
     let tracked = URL(string: "https://example.com/a?si=xyz")!
     let deduped = ShareRequestBuilder.normalized([.url(url, pageTitle: nil, selection: nil), .url(tracked, pageTitle: nil, selection: nil)])
-    #expect(deduped.count == 1)
+    #expect(deduped.inputs.count == 1)
     let withCaption = ShareRequestBuilder.normalized([.url(url, pageTitle: nil, selection: nil), .text("A title")])
-    #expect(withCaption.count == 1)
-    if case .url(let kept, _, _) = withCaption.first { #expect(kept == url) } else { Issue.record("expected url") }
+    #expect(withCaption.inputs.count == 1)
+    if case .url(let kept, _, _, _) = withCaption.inputs.first { #expect(kept == url) } else { Issue.record("expected url") }
     let twoLinks = ShareRequestBuilder.normalized([.url(url, pageTitle: nil, selection: nil), .url(URL(string: "https://other.org/")!, pageTitle: nil, selection: nil)])
-    #expect(twoLinks.count == 2)
-    #expect(ShareRequestBuilder.normalized([file("a.jpg"), file("b.jpg")]).count == 2)
-    #expect(ShareRequestBuilder.normalized([file("a.jpg"), .text("caption")]).count == 2)
-    #expect(ShareRequestBuilder.normalized([.text("one"), .text("two")]).count == 2)
+    #expect(twoLinks.inputs.count == 2)
+    #expect(ShareRequestBuilder.normalized([file("a.jpg"), file("b.jpg")]).inputs.count == 2)
+    #expect(ShareRequestBuilder.normalized([file("a.jpg"), .text("caption")]).inputs.count == 2)
+    #expect(ShareRequestBuilder.normalized([.text("one"), .text("two")]).inputs.count == 2)
+}
+
+@Test func normalizedTurnsAccompanyingTextIntoTitleOrNote() {
+    let url = URL(string: "https://example.com/a")!
+    let titled = ShareRequestBuilder.normalized([.url(url, pageTitle: nil, selection: nil), .text("  A caption ")])
+    #expect(titled.inputs.count == 1 && titled.note == nil)
+    if case .url(_, let pageTitle, _, _) = titled.inputs.first { #expect(pageTitle == "A caption") } else { Issue.record("expected url") }
+    let noted = ShareRequestBuilder.normalized([.url(url, pageTitle: "Page", selection: nil), .text("Look at this"), .text(url.absoluteString)])
+    #expect(noted.inputs.count == 1 && noted.note == "Look at this")
+    let state = ShareRequestBuilder.initialState(for: titled.inputs, existing: nil, now: t0)
+    #expect(state.title == "A caption")
+}
+
+@Test func urlDescriptionPrefillsState() {
+    let input = SharedInput.url(URL(string: "https://example.com/a")!, pageTitle: "P", selection: nil, description: "  About it ")
+    let s = ShareRequestBuilder.initialState(for: [input], existing: nil, now: t0)
+    #expect(s.description == "About it")
+    let (req, _) = ShareRequestBuilder.request(from: s, initial: s, inputs: [input], existing: nil, id: id0, now: t0)
+    #expect(req.entries[0].description == "About it")
+    let multi = ShareRequestBuilder.initialState(for: [input, file("a.jpg")], existing: nil, now: t0)
+    let (multiReq, _) = ShareRequestBuilder.request(from: multi, initial: multi, inputs: [input, file("a.jpg")], existing: nil, id: id0, now: t0)
+    #expect(multiReq.entries[0].description == "About it")
 }

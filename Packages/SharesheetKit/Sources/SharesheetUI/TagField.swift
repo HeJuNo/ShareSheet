@@ -2,18 +2,21 @@ import SwiftUI
 
 /// Tag chips plus an input. Comma or return commits the typed token; backspace on an empty input
 /// removes the last tag; suggestions matching the typed prefix can be tapped to add.
+/// `pending` mirrors the typed, not yet committed text so a form can commit it on save.
 public struct TagField: View {
     /// Keeps the field non-empty so a backspace on "empty" input is observable as a change.
     private static let sentinel = "\u{200B}"
     private static let maxSuggestions = 8
 
     @Binding private var tags: [String]
+    @Binding private var pending: String
     private let suggestions: [String]
     @State private var input = TagField.sentinel
     @FocusState private var focused: Bool
 
-    public init(tags: Binding<[String]>, suggestions: [String]) {
+    public init(tags: Binding<[String]>, suggestions: [String], pending: Binding<String> = .constant("")) {
         self._tags = tags
+        self._pending = pending
         self.suggestions = suggestions
     }
 
@@ -51,7 +54,14 @@ public struct TagField: View {
                     commit(typed)
                     focused = true
                 }
-                .onChange(of: input) { _, newValue in handleChange(newValue) }
+                .onChange(of: input) { _, newValue in
+                    handleChange(newValue)
+                    pending = typed
+                }
+                .onChange(of: pending) { _, newValue in
+                    // Committed by the owner (e.g. on save): clear the field.
+                    if newValue.isEmpty && !typed.isEmpty { input = Self.sentinel }
+                }
                 .overlay(alignment: .leading) {
                     if typed.isEmpty {
                         Text("Add tags").foregroundStyle(.tertiary).allowsHitTesting(false)
@@ -97,7 +107,7 @@ public struct TagField: View {
     }
 
     /// `tags` plus the trimmed token, unless it is empty or already present (case-insensitively).
-    static func adding(_ token: String, to tags: [String]) -> [String] {
+    public static func adding(_ token: String, to tags: [String]) -> [String] {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !tags.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame })
         else { return tags }

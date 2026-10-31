@@ -253,6 +253,23 @@ public final class LibraryIndex: Sendable {
         }
     }
 
+    /// The item whose URL equals `url` once tracking parameters are stripped from both.
+    public func itemID(forURL url: URL) throws -> ItemID? {
+        let target = URLCleaner.clean(url)
+        return try pool.read { db in
+            let rows = try Row.fetchAll(
+                db, sql: "SELECT id, url FROM items WHERE domain IS ? AND url IS NOT NULL ORDER BY created",
+                arguments: [Self.domain(of: target)])
+            for row in rows {
+                let candidate: String = row["url"]
+                if let candidateURL = URL(string: candidate), URLCleaner.clean(candidateURL) == target {
+                    return ItemID(relativePath: row["id"])
+                }
+            }
+            return nil
+        }
+    }
+
     public func allTags() throws -> [String] {
         try pool.read { db in
             try String.fetchAll(db, sql: "SELECT tag FROM item_tags GROUP BY tag ORDER BY COUNT(*) DESC, tag")

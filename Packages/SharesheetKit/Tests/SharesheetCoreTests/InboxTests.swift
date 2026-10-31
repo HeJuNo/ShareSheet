@@ -238,3 +238,35 @@ private func importer(_ inbox: Inbox, _ store: any ItemStore) -> InboxImporter {
         #expect(throws: InboxError.self) { try inbox.enqueue(.fixture(), files: [name: file]) }
     }
 }
+
+@Test func newShareOfKnownURLMergesInsteadOfCreating() async throws {
+    let (inbox, _) = try makeInbox()
+    let (store, _) = try makeStore()
+    let billa = try await store.createCollection(named: "Billa", in: .root)
+    let existing = try await store.create(
+        .fixture(url: URL(string: "https://a.b/p")!, title: "Kept", tags: ["a"], highlights: ["h1"]), in: billa)
+    try inbox.enqueue(
+        .fixture(
+            entries: [.fixture(type: .video, url: URL(string: "https://a.b/p?utm_source=x")!, title: "New", highlight: "h2")],
+            collection: .unsorted, tags: ["a", "b"], note: "fresh", favorite: true),
+        files: [:])
+    let report = await importer(inbox, store).importAll()
+    #expect(report.imported == [existing.id] && report.failed == 0)
+    let all = try await store.listItems()
+    #expect(all.count == 1)
+    let item = all[0]
+    #expect(item.id == existing.id && item.title == "Kept" && item.type == .link)
+    #expect(item.highlights == ["h1", "h2"] && item.tags == ["a", "b"])
+    #expect(item.note == "fresh" && item.favorite)
+    #expect(try inbox.pending().isEmpty)
+}
+
+@Test func mergeKeepsExistingNoteAndFavoriteAndDedupesHighlight() async throws {
+    let (inbox, _) = try makeInbox()
+    let (store, _) = try makeStore()
+    _ = try await store.create(.fixture(favorite: true, note: "old", highlights: ["h1"]), in: .unsorted)
+    try inbox.enqueue(.fixture(entries: [.fixture(highlight: "h1")], note: "new", favorite: false), files: [:])
+    _ = await importer(inbox, store).importAll()
+    let all = try await store.listItems()
+    #expect(all.count == 1 && all[0].note == "old" && all[0].favorite && all[0].highlights == ["h1"])
+}

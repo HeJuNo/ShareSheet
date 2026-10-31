@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import QuickLookThumbnailing
 import SharesheetCore
+import SharesheetUI
 import UIKit
 
 /// State and actions of the share sheet: loads the payload, prefills the form, saves via the inbox.
@@ -22,6 +23,10 @@ final class ShareFormModel {
     private(set) var tagSuggestions: [String] = []
     private(set) var thumbnail: UIImage?
     private(set) var isSaving = false
+    /// Attachments that could not be read; the rest can still be saved.
+    private(set) var failedCount = 0
+    /// Tag text typed but not yet committed with comma or return.
+    var pendingTag = ""
     var errorMessage: LocalizedStringResource?
 
     @ObservationIgnored private var initial = SheetState(type: .link, title: "")
@@ -47,33 +52,62 @@ final class ShareFormModel {
     func load() async {
         guard phase == .loading else { return }
         let items = context?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
-        inputs = ShareRequestBuilder.normalized((try? await payloadLoader.load(items)) ?? [])
+        let loaded = await payloadLoader.load(items)
+        failedCount = loaded.failed
+        let normalized = ShareRequestBuilder.normalized(loaded.inputs)
+        inputs = normalized.inputs
         guard !inputs.isEmpty else {
             phase = .empty
             return
         }
+        var lookupURL: URL?
+        if inputs.count == 1, case .url(let url, _, _, _) = inputs[0] { lookupURL = url }
+
+        // Independent lookups run side by side, each bounded, so none can hold up the sheet.
         async let tags = Self.loadTags()
-        store = await bounded(Self.lookupTimeout) { await ICloudLocator.libraryRoot() }
-            .flatMap { $0 }.map { FolderItemStore(root: $0) }
-        if let store, inputs.count == 1, case .url(let url, _, _) = inputs[0] {
-            existing = await bounded(Self.lookupTimeout) { try? await store.findItem(url: url) } ?? nil
+        async let knownID = Self.indexedItemID(for: lookupURL)
+        async let located = Self.locateLibrary()
+        let (store, found) = await located
+        self.store = store
+        if let store, let id = await knownID {
+            existing = await bounded(Self.lookupTimeout) { try? await store.item(id) } ?? nil
         }
         initial = ShareRequestBuilder.initialState(for: inputs, existing: existing, now: Date())
         state = initial
-        collections = await loadCollections()
+        if let note = normalized.note {
+            state.note = state.note.isEmpty ? note : state.note + "\n\n" + note
+        }
+        collections = Self.collectionList(found, current: state.collection, multiple: isMultiple)
         tagSuggestions = await tags
         phase = .ready
         startPreview()
     }
 
-    private func loadCollections() async -> [CollectionPath] {
-        var result: [CollectionPath] = [.unsorted]
-        if let store, let found = await bounded(Self.lookupTimeout, { try? await store.collections() }) ?? nil {
-            result = found
+    /// The library store and its collections, each step bounded.
+    private nonisolated static func locateLibrary() async -> (FolderItemStore?, [CollectionPath]?) {
+        guard let root = await bounded(lookupTimeout, { await ICloudLocator.libraryRoot() }) ?? nil else {
+            return (nil, nil)
         }
+        let store = FolderItemStore(root: root)
+        let found = await bounded(lookupTimeout) { try? await store.collections() } ?? nil
+        return (store, found)
+    }
+
+    /// Re-share detection through the read-only index; a full library scan would not fit the time bound.
+    private nonisolated static func indexedItemID(for url: URL?) async -> ItemID? {
+        guard let url, let path = AppGroup.indexURL() else { return nil }
+        return await bounded(lookupTimeout) {
+            try? LibraryIndex(path: path, readOnly: true).itemID(forURL: url)
+        } ?? nil
+    }
+
+    private static func collectionList(
+        _ found: [CollectionPath]?, current: CollectionPath, multiple: Bool
+    ) -> [CollectionPath] {
+        var result = found ?? [.unsorted]
         if !result.contains(.unsorted) { result.append(.unsorted) }
-        if !result.contains(state.collection) { result.append(state.collection) }
-        if isMultiple && !result.contains(.root) { result.append(.root) }
+        if !result.contains(current) { result.append(current) }
+        if multiple && !result.contains(.root) { result.append(.root) }
         return result
     }
 
@@ -135,6 +169,8 @@ final class ShareFormModel {
         guard phase == .ready, !isSaving else { return }
         isSaving = true
         errorMessage = nil
+        state.tags = TagField.adding(pendingTag, to: state.tags)
+        pendingTag = ""
         previewTask?.cancel()
         previewLoader.cancel()
         guard let inboxRoot = AppGroup.inboxURL() else {

@@ -75,6 +75,16 @@ public struct InboxImporter: Sendable {
                 // The item was deleted meanwhile; import it as new.
             }
         }
+        // A new share of a URL that is already in the library (the sheet's lookup can miss it).
+        if reshareTarget == nil, request.entries.count == 1, progress.done["0"] == nil,
+           request.existingItem == nil, let url = request.entries[0].url, request.entries[0].fileName == nil,
+           let known = try await store.findItem(url: url) {
+            let id = try await merge(request, entry: request.entries[0], into: known)
+            progress.done["0"] = id.relativePath
+            try saveProgress(progress, directory)
+            created.append(id)
+            return
+        }
         if let existing = reshareTarget {
             let id = try await reshare(request, entry: request.entries[0], existing: existing)
             progress.done["0"] = id.relativePath
@@ -110,6 +120,18 @@ public struct InboxImporter: Sendable {
             item = try await store.move(item.id, to: collection)
         }
         return item.id
+    }
+
+    /// Adds the share to `item`: highlight appended, tags unioned, note only if it had none,
+    /// favorite if either is. Title, type and collection stay as they are.
+    private func merge(_ request: ShareRequest, entry: ShareEntry, into item: Item) async throws -> ItemID {
+        var merged = item
+        if let highlight = entry.highlight, !merged.highlights.contains(highlight) { merged.highlights.append(highlight) }
+        for tag in request.tags where !merged.tags.contains(tag) { merged.tags.append(tag) }
+        if merged.note.isEmpty { merged.note = request.note }
+        merged.favorite = item.favorite || request.favorite
+        guard merged != item else { return item.id }
+        return try await store.update(merged).id
     }
 
     private func create(
