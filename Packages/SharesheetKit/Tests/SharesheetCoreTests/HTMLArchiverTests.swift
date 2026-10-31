@@ -106,4 +106,60 @@ private func data(_ s: String) -> Data { Data(s.utf8) }
         #expect(ArchiveText.extract(fromHTML: "<p>Hello <b>world</b></p><style>x{}</style>") == "Hello world")
         #expect(ArchiveText.extract(fromHTML: "<head><title>T</title></head><body>\n a \n\n b <script>x()</script><noscript>n</noscript><template>t</template></body>") == "a b")
     }
+
+    @Test func stopsFetchingOnceBudgetIsSpent() async throws {
+        let eight = Data(repeating: 7, count: 8)
+        let rec = RecordingFetcher(responses: ["1", "2", "3"].reduce(into: [:]) { $0[u("https://example.com/\($1).png")] = (eight, nil) })
+        let a = HTMLArchiver(fetcher: rec, totalByteLimit: 10, maxConcurrent: 1)
+        let out = try await a.archive(html: #"<img src="/1.png"><img src="/2.png"><img src="/3.png">"#, baseURL: base)
+        #expect(rec.count == 2)
+        #expect(out.contains("data:image/png;base64,"))
+        #expect(out.contains(#"src="https://example.com/2.png""#) && out.contains(#"src="https://example.com/3.png""#))
+    }
+
+    @Test func injectsContentSecurityPolicyAfterCharset() async throws {
+        let out = try await archiver([:]).archive(html: "<html><head></head><body>x</body></html>", baseURL: base)
+        let csp = #"<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src data:; font-src data:; style-src 'unsafe-inline' data:">"#
+        #expect(out.contains(csp))
+        let head = try #require(out.range(of: "<head>"))
+        #expect(out[head.upperBound...].hasPrefix(#"<meta charset="utf-8">"# + csp))
+    }
+
+    @Test func removesPreloadLinksAndRemoteMedia() async throws {
+        let html = #"<head><link rel="preload" href="/f.woff2" as="font"><link rel="preconnect" href="https://cdn.x"><link rel="manifest" href="/m.json"></head><body><video src="/v.mp4" poster="/p.png"><source src="/v.webm"></video><audio src="/a.mp3"></audio><input type="image" src="/i.png"><div background="/b.png"></div><svg><use href="https://evil/x.svg#a"></use></svg></body>"#
+        let a = archiver([u("https://example.com/p.png"): (Data([1]), nil)])
+        let out = try await a.archive(html: html, baseURL: base)
+        #expect(!out.contains("<link") && !out.contains("v.mp4") && !out.contains("v.webm") && !out.contains("a.mp3"))
+        #expect(!out.contains("https://example.com/p.png") && out.contains(#"poster="data:image/png;base64,AQ==""#))
+        #expect(!out.contains("https://example.com/i.png") && !out.contains("https://example.com/b.png"))
+        #expect(!out.contains("https://evil"))
+    }
+
+    @Test func neutralisesObfuscatedJavascriptSchemes() async throws {
+        let html = "<a href=\"java\tscript:alert(1)\">a</a><a href=\"\u{1}javascript:x\">b</a><a href=\" JaVaScRiPt:x\">c</a><form action=\"javascript:y()\"><button formaction=\"javascript:z()\"></button></form><a href=\"ftp://h/x\">d</a><a href=\"data:text/html,x\">e</a>"
+        let out = try await archiver([:]).archive(html: html, baseURL: base)
+        #expect(!out.lowercased().contains("script:") && !out.contains("ftp:") && !out.contains("data:text"))
+        #expect(!out.contains("javascript"))
+    }
+
+    @Test func honoursBaseHref() async throws {
+        let rec = RecordingFetcher(responses: [u("https://example.com/sub/a.png"): (Data([1]), nil)])
+        let a = HTMLArchiver(fetcher: rec, totalByteLimit: 1000)
+        let out = try await a.archive(html: #"<head><base href="/sub/"></head><body><img src="a.png"><a href="b">x</a></body>"#, baseURL: base)
+        #expect(out.contains("data:image/png;base64,AQ=="))
+        #expect(out.contains(#"href="https://example.com/sub/b""#) && !out.contains("<base"))
+    }
+}
+
+final class RecordingFetcher: ResourceFetching, @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+    let responses: [URL: (Data, String?)]
+    init(responses: [URL: (Data, String?)]) { self.responses = responses }
+    var count: Int { lock.withLock { calls } }
+    func fetch(_ url: URL) async throws -> (data: Data, mimeType: String?) {
+        lock.withLock { calls += 1 }
+        guard let r = responses[url] else { throw StubFetcher.NotFound() }
+        return (r.0, r.1)
+    }
 }
