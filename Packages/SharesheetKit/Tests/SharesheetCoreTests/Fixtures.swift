@@ -87,3 +87,80 @@ func tempFile(named name: String, bytes: Int) throws -> URL {
     try Data(repeating: 0x41, count: bytes).write(to: url)
     return url
 }
+
+extension ShareEntry {
+    static func fixture(
+        type: ItemType = .link,
+        url: URL? = URL(string: "https://a.b/")!,
+        title: String = "T",
+        description: String? = nil,
+        content: String? = nil,
+        highlight: String? = nil,
+        fileName: String? = nil,
+        previewImageName: String? = nil
+    ) -> ShareEntry {
+        ShareEntry(
+            type: type, url: url, title: title, description: description, content: content,
+            highlight: highlight, fileName: fileName, previewImageName: previewImageName)
+    }
+}
+
+extension ShareRequest {
+    static func fixture(
+        id: UUID = UUID(),
+        created: Date = ISO8601DateFormatter().date(from: "2026-10-31T20:44:00Z")!,
+        entries: [ShareEntry] = [.fixture()],
+        collection: CollectionPath = .unsorted,
+        newCollectionName: String? = nil,
+        tags: [String] = [],
+        note: String = "",
+        favorite: Bool = false,
+        existingItem: ItemID? = nil,
+        edits: SheetEdits? = nil
+    ) -> ShareRequest {
+        ShareRequest(
+            id: id, created: created, entries: entries, collection: collection,
+            newCollectionName: newCollectionName, tags: tags, note: note, favorite: favorite,
+            existingItem: existingItem, edits: edits)
+    }
+}
+
+/// A file of the given apparent size with no data written.
+func sparseFile(bytes: Int) throws -> URL {
+    let url = try makeTempDirectory().appending(path: "sparse.bin")
+    FileManager.default.createFile(atPath: url.path, contents: nil)
+    let handle = try FileHandle(forWritingTo: url)
+    try handle.truncate(atOffset: UInt64(bytes))
+    try handle.close()
+    return url
+}
+
+/// Wraps a real store but fails every `create` with `.unavailable`.
+struct UnavailableStore: ItemStore {
+    let base: any ItemStore
+    func listItems() async throws -> [Item] { try await base.listItems() }
+    func item(_ id: ItemID) async throws -> Item { try await base.item(id) }
+    func findItem(url: URL) async throws -> Item? { try await base.findItem(url: url) }
+    func create(_ draft: ItemDraft, in collection: CollectionPath) async throws -> Item {
+        throw StoreError.unavailable
+    }
+    func update(_ item: Item) async throws -> Item { try await base.update(item) }
+    func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item {
+        try await base.move(id, to: collection)
+    }
+    func delete(_ id: ItemID) async throws { try await base.delete(id) }
+    func addAttachment(from source: URL, preferredName: String) async throws -> String {
+        try await base.addAttachment(from: source, preferredName: preferredName)
+    }
+    func attachmentURL(_ relativePath: String) async throws -> URL {
+        try await base.attachmentURL(relativePath)
+    }
+    func collections() async throws -> [CollectionPath] { try await base.collections() }
+    func createCollection(named name: String, in parent: CollectionPath) async throws -> CollectionPath {
+        try await base.createCollection(named: name, in: parent)
+    }
+    func deleteCollection(_ path: CollectionPath, moveItemsTo destination: CollectionPath?) async throws {
+        try await base.deleteCollection(path, moveItemsTo: destination)
+    }
+    func changes() -> AsyncStream<Void> { base.changes() }
+}

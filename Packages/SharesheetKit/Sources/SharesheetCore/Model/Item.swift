@@ -122,3 +122,19 @@ public struct ItemDraft: Sendable {
         self.previewImageSource = previewImageSource
     }
 }
+
+extension Item {
+    /// Merges the fields the user changed in the share sheet; `edits.collection` is applied by the importer.
+    public func applying(_ edits: SheetEdits, highlight: String?) -> Item {
+        var item = self
+        if let type = edits.type { item.type = type }
+        if let title = edits.title { item.title = title }
+        if let note = edits.note { item.note = note }
+        if let favorite = edits.favorite { item.favorite = favorite }
+        var tags = item.tags
+        for tag in edits.addedTags where !tags.contains(tag) { tags.append(tag) }
+        item.tags = tags.filter { !edits.removedTags.contains($0) }
+        if let highlight, !item.highlights.contains(highlight) { item.highlights.append(highlight) }
+        return item
+    }
+}
