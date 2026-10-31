@@ -9,21 +9,24 @@ struct HomeView: View {
     @State private var showsSettings = false
     @State private var asksCollectionName = false
     @State private var newCollectionName = ""
+    @State private var searchTag: String?
+    @State private var collectionFailed = false
 
     var body: some View {
         NavigationStack {
-            List {
-                if !model.isICloudAvailable {
-                    Section {
-                        Label("iCloud unavailable", systemImage: "icloud.slash")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                let text = searchText.trimmingCharacters(in: .whitespaces)
-                if text.isEmpty {
-                    library
+            Group {
+                if let query = searchQuery {
+                    ItemResults(query: query)
                 } else {
-                    ItemResults(query: LibraryQuery(text: text, scope: .all))
+                    List {
+                        if model.iCloudState == .unavailable {
+                            Section {
+                                Label("iCloud unavailable", systemImage: "icloud.slash")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        library
+                    }
                 }
             }
             .navigationTitle("Sharesheet")
@@ -31,7 +34,15 @@ struct HomeView: View {
                 ItemListView(query: LibraryQuery(scope: scope))
             }
             .searchable(text: $searchText, prompt: Text("Search"))
+            .onChange(of: searchText) { _, text in
+                if text.trimmingCharacters(in: .whitespaces).isEmpty { searchTag = nil }
+            }
             .toolbar {
+                if let query = searchQuery {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        TagFilterMenu(selection: $searchTag, tags: TagFilterMenu.tags(of: model.items(untagged(query)), in: model.tags))
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showsSettings = true
@@ -46,6 +57,9 @@ struct HomeView: View {
                 TextField("Name", text: $newCollectionName)
                 Button("Cancel", role: .cancel) {}
                 Button("Create") { createCollection() }
+            }
+            .alert("Couldn’t create the collection", isPresented: $collectionFailed) {
+                Button("OK") {}
             }
         }
     }
@@ -82,6 +96,18 @@ struct HomeView: View {
         }
     }
 
+    /// The search over all items, nil while the search field is empty.
+    private var searchQuery: LibraryQuery? {
+        let text = searchText.trimmingCharacters(in: .whitespaces)
+        return text.isEmpty ? nil : LibraryQuery(text: text, scope: .all, tag: searchTag)
+    }
+
+    private func untagged(_ query: LibraryQuery) -> LibraryQuery {
+        var result = query
+        result.tag = nil
+        return result
+    }
+
     /// Direct sub-collections; `Unsorted` is listed with the fixed scopes instead.
     private func children(of parent: CollectionPath) -> [CollectionPath] {
         model.collections.filter { $0.parent == parent && $0 != .unsorted }
@@ -89,8 +115,13 @@ struct HomeView: View {
 
     private func createCollection() {
         let name = newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        Task { _ = await model.createCollection(named: name, in: .root) }
+        Task {
+            do {
+                _ = try await model.createCollection(named: name, in: .root)
+            } catch {
+                collectionFailed = true
+            }
+        }
     }
 }
 

@@ -60,6 +60,7 @@ struct AppModelTests {
         await model.refresh()
 
         #expect(!model.isICloudAvailable)
+        #expect(model.iCloudState == .unavailable)
         #expect(try env.inbox.pending().count == 1)
         #expect(model.counts.all == 0)
     }
@@ -132,12 +133,62 @@ struct AppModelTests {
         await model.refresh()
         let item = try #require(model.items(LibraryQuery(scope: .all)).first)
 
-        await model.toggleFavorite(item)
+        try await model.toggleFavorite(item)
         #expect(model.counts.favorites == 0)
-        await model.delete(item)
+        try await model.delete(item)
 
         #expect(model.counts.all == 0)
         #expect(try await env.store.listItems().isEmpty)
+    }
+
+    @Test func iCloudStateIsUnknownUntilTheStoreAnswers() async throws {
+        let env = try ModelEnv()
+        let model = env.model()
+        #expect(model.iCloudState == .unknown)
+        #expect(!model.isICloudAvailable)
+
+        await model.refresh()
+
+        #expect(model.iCloudState == .available)
+    }
+
+    @Test func deletingAMissingItemThrows() async throws {
+        let env = try ModelEnv()
+        _ = try await env.store.create(ItemDraft(type: .text, title: "Gone"), in: .unsorted)
+        let model = env.model()
+        await model.refresh()
+        let item = try #require(model.items(LibraryQuery(scope: .all)).first)
+        try FileManager.default.removeItem(at: env.libraryRoot.appending(path: item.id.relativePath))
+
+        await #expect(throws: (any Error).self) { try await model.delete(item) }
+        await #expect(throws: (any Error).self) { try await model.toggleFavorite(item) }
+    }
+
+    @Test func creatingAReservedCollectionThrows() async throws {
+        let env = try ModelEnv()
+        let model = env.model()
+        await model.refresh()
+
+        for name in ["_attachments", ".hidden", "   "] {
+            await #expect(throws: (any Error).self) { try await model.createCollection(named: name, in: .root) }
+        }
+        let created = try await model.createCollection(named: "Billa", in: .root)
+        #expect(created == CollectionPath(components: ["Billa"]))
+        #expect(model.collections.contains(created))
+    }
+
+    @Test func corruptInboxRequestIsCountedAsImportProblem() async throws {
+        let env = try ModelEnv()
+        let broken = env.base.appending(path: "Inbox/\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
+        try Data("not json".utf8).write(to: broken.appending(path: "request.json"))
+        try env.enqueueText("Fine")
+        let model = env.model()
+
+        await model.refresh()
+
+        #expect(model.lastImportProblemCount == 1)
+        #expect(model.counts.all == 1)
     }
 
     @Test func pendingCaptureCountComesFromIndex() async throws {

@@ -1,14 +1,32 @@
 import Foundation
 import Observation
+import OSLog
 import SharesheetCore
+
+enum ICloudState: Equatable {
+    /// The store factory has not answered yet.
+    case unknown
+    case available
+    case unavailable
+}
+
+enum AppModelError: Error, Equatable {
+    /// Empty, or reserved (`_attachments`, names starting with `.`).
+    case invalidCollectionName
+}
 
 /// Ties the iCloud library, the index, the share inbox and the capture runner together for the UI.
 @MainActor @Observable final class AppModel {
-    private(set) var isICloudAvailable = true
+    nonisolated private static let log = Logger(subsystem: "com.luetgendorf.Sharesheet", category: "Library")
+
+    private(set) var iCloudState = ICloudState.unknown
+    var isICloudAvailable: Bool { iCloudState == .available }
     private(set) var counts = LibraryCounts()
     private(set) var collections: [CollectionPath] = []
     private(set) var tags: [String] = []
     private(set) var pendingCaptureCount = 0
+    /// Inbox requests the last import could not take in (failed or unreadable); they stay in the inbox.
+    private(set) var lastImportProblemCount = 0
     /// Bumped whenever the index changed, so views reading `items(_:)` re-render.
     private(set) var revision = 0
 
@@ -72,8 +90,13 @@ import SharesheetCore
         if let extensionTemporaryRoot { await Self.sweep(extensionTemporaryRoot) }
         let store = await resolveStore()
         if let store {
-            await Self.reindex(store: store, inbox: inbox, index: index)
-            collections = (try? await store.collections()) ?? collections
+            let report = await Self.reindex(store: store, inbox: inbox, index: index)
+            lastImportProblemCount = report.failed + report.unreadable
+            do {
+                collections = try await store.collections()
+            } catch {
+                Self.log.error("Listing collections failed: \(error)")
+            }
         } else {
             collections = []
         }
@@ -84,7 +107,7 @@ import SharesheetCore
     private func resolveStore() async -> (any ItemStore)? {
         if let store { return store }
         let resolved = await storeFactory()
-        isICloudAvailable = resolved != nil
+        iCloudState = resolved == nil ? .unavailable : .available
         guard let resolved else { return nil }
         store = resolved
         listen(to: resolved)
@@ -108,10 +131,18 @@ import SharesheetCore
         }
     }
 
-    nonisolated private static func reindex(store: any ItemStore, inbox: Inbox, index: LibraryIndex) async {
-        _ = await InboxImporter(inbox: inbox, store: store).importAll()
-        guard let items = try? await store.listItems() else { return }
-        try? index.replaceAll(with: items)
+    nonisolated private static func reindex(store: any ItemStore, inbox: Inbox, index: LibraryIndex) async -> ImportReport {
+        let report = await InboxImporter(inbox: inbox, store: store).importAll()
+        if report.failed + report.unreadable + report.cleanupFailed > 0 {
+            log.error(
+                "Inbox import: \(report.imported.count) imported, \(report.failed) failed, \(report.unreadable) unreadable, \(report.cleanupFailed) not cleaned up")
+        }
+        do {
+            try index.replaceAll(with: try await store.listItems())
+        } catch {
+            log.error("Re-indexing the library failed: \(error)")
+        }
+        return report
     }
 
     /// Removes the share extension's per-share folders left behind for more than an hour.
@@ -128,10 +159,13 @@ import SharesheetCore
     }
 
     private func reloadFromIndex() {
-        counts = (try? index.counts()) ?? LibraryCounts()
-        tags = (try? index.allTags()) ?? []
-        pendingCaptureCount = ((try? index.search(LibraryQuery(scope: .all))) ?? [])
-            .filter { $0.capture == .pending }.count
+        do {
+            counts = try index.counts()
+            tags = try index.allTags()
+            pendingCaptureCount = try index.search(LibraryQuery(scope: .all)).filter { $0.capture == .pending }.count
+        } catch {
+            Self.log.error("Reading the index failed: \(error)")
+        }
         faviconCache = [:]
         revision += 1
     }
@@ -163,7 +197,12 @@ import SharesheetCore
 
     func items(_ query: LibraryQuery) -> [IndexedItem] {
         _ = revision
-        return (try? index.search(query)) ?? []
+        do {
+            return try index.search(query)
+        } catch {
+            Self.log.error("Searching the index failed: \(error)")
+            return []
+        }
     }
 
     /// Favicons are stored by full host (`www.` included), as the capture runner saves them.
@@ -177,24 +216,51 @@ import SharesheetCore
 
     // MARK: Editing
 
-    func toggleFavorite(_ item: IndexedItem) async {
-        guard let store, var full = try? await store.item(item.id) else { return }
-        full.favorite.toggle()
-        guard let saved = try? await store.update(full) else { return }
-        try? index.upsert(saved)
+    func toggleFavorite(_ item: IndexedItem) async throws {
+        let store = try requireStore()
+        do {
+            var full = try await store.item(item.id)
+            full.favorite.toggle()
+            let saved = try await store.update(full)
+            try? index.upsert(saved)
+        } catch {
+            Self.log.error("Toggling favorite failed: \(error)")
+            throw error
+        }
         reloadFromIndex()
     }
 
-    func delete(_ item: IndexedItem) async {
-        guard let store, (try? await store.delete(item.id)) != nil else { return }
+    func delete(_ item: IndexedItem) async throws {
+        let store = try requireStore()
+        do {
+            try await store.delete(item.id)
+        } catch {
+            Self.log.error("Deleting an item failed: \(error)")
+            throw error
+        }
         try? index.remove(item.id)
         reloadFromIndex()
     }
 
-    func createCollection(named name: String, in parent: CollectionPath) async -> CollectionPath? {
-        guard let store, let path = try? await store.createCollection(named: name, in: parent) else { return nil }
-        collections = (try? await store.collections()) ?? collections + [path]
-        return path
+    func createCollection(named name: String, in parent: CollectionPath) async throws -> CollectionPath {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "_attachments", !trimmed.hasPrefix(".") else {
+            throw AppModelError.invalidCollectionName
+        }
+        let store = try requireStore()
+        do {
+            let path = try await store.createCollection(named: trimmed, in: parent)
+            collections = (try? await store.collections()) ?? collections + [path]
+            return path
+        } catch {
+            Self.log.error("Creating a collection failed: \(error)")
+            throw error
+        }
+    }
+
+    private func requireStore() throws -> any ItemStore {
+        guard let store else { throw StoreError.unavailable }
+        return store
     }
 
     /// Re-reads every file and re-extracts the archived page text, e.g. after a reinstall.
@@ -206,7 +272,13 @@ import SharesheetCore
     }
 
     nonisolated private static func reextractArchiveText(store: any ItemStore, index: LibraryIndex) async {
-        guard let items = try? await store.listItems() else { return }
+        let items: [Item]
+        do {
+            items = try await store.listItems()
+        } catch {
+            log.error("Listing items for the archive text failed: \(error)")
+            return
+        }
         for archive in Set(items.compactMap(\.archive)) {
             guard let url = try? await store.attachmentURL(archive),
                 let html = try? String(contentsOf: url, encoding: .utf8)

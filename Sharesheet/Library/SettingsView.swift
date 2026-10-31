@@ -11,9 +11,17 @@ struct SettingsView: View {
             Form {
                 Section {
                     LabeledContent {
-                        Text(model.isICloudAvailable ? "Available" : "Unavailable")
+                        switch model.iCloudState {
+                        case .unknown: Text("Checking…")
+                        case .available: Text("Available")
+                        case .unavailable: Text("Unavailable")
+                        }
                     } label: {
-                        Label("iCloud Drive", systemImage: model.isICloudAvailable ? "icloud" : "icloud.slash")
+                        Label("iCloud Drive", systemImage: model.iCloudState == .unavailable ? "icloud.slash" : "icloud")
+                    }
+                    if model.lastImportProblemCount > 0 {
+                        Label("Shares not imported: \(model.lastImportProblemCount)", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
                     }
                 }
                 Section {

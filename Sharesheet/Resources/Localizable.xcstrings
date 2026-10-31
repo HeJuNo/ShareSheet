@@ -31,10 +31,22 @@
     "Capture pending now (%lld)" : {
       "extractionState" : "manual"
     },
+    "Checking…" : {
+      "extractionState" : "manual"
+    },
     "Collection" : {
       "extractionState" : "manual"
     },
     "Collections" : {
+      "extractionState" : "manual"
+    },
+    "Couldn’t change the favorite" : {
+      "extractionState" : "manual"
+    },
+    "Couldn’t create the collection" : {
+      "extractionState" : "manual"
+    },
+    "Couldn’t delete the item" : {
       "extractionState" : "manual"
     },
     "Create" : {
@@ -85,6 +97,9 @@
     "No items" : {
       "extractionState" : "manual"
     },
+    "OK" : {
+      "extractionState" : "manual"
+    },
     "Rebuild index" : {
       "extractionState" : "manual"
     },
@@ -92,6 +107,9 @@
       "extractionState" : "manual"
     },
     "Settings" : {
+      "extractionState" : "manual"
+    },
+    "Shares not imported: %lld" : {
       "extractionState" : "manual"
     },
     "Sharesheet" : {

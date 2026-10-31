@@ -9,58 +9,28 @@ struct ItemListView: View {
     @State private var tag: String?
 
     var body: some View {
-        let current = effectiveQuery
-        List {
-            ItemResults(query: current)
-        }
-        .listStyle(.plain)
-        .overlay {
-            if model.items(current).isEmpty {
-                if searchText.isEmpty {
-                    ContentUnavailableView("No items", systemImage: "tray")
-                } else {
-                    ContentUnavailableView.search(text: searchText)
+        ItemResults(query: effectiveQuery)
+            .navigationTitle(Self.title(query.scope))
+            .searchable(text: $searchText, prompt: Text("Search"))
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    TagFilterMenu(selection: $tag, tags: TagFilterMenu.tags(of: model.items(untaggedQuery), in: model.tags))
                 }
             }
-        }
-        .navigationTitle(Self.title(query.scope))
-        .searchable(text: $searchText, prompt: Text("Search"))
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { tagMenu }
-        }
-        .refreshable { await model.refresh() }
+            .refreshable { await model.refresh() }
     }
 
-    private var effectiveQuery: LibraryQuery {
+    private var untaggedQuery: LibraryQuery {
         var result = query
         let text = searchText.trimmingCharacters(in: .whitespaces)
         if !text.isEmpty { result.text = text }
-        if let tag { result.tag = tag }
         return result
     }
 
-    /// Tags used by items of this scope, most used first.
-    private var scopeTags: [String] {
-        var unfiltered = effectiveQuery
-        unfiltered.tag = query.tag
-        let used = Set(model.items(unfiltered).flatMap(\.tags).map { $0.lowercased() })
-        var seen = Set<String>()
-        return model.tags.filter { used.contains($0.lowercased()) && seen.insert($0.lowercased()).inserted }
-    }
-
-    private var tagMenu: some View {
-        Menu {
-            Picker(selection: $tag) {
-                Text("All tags").tag(String?.none)
-                ForEach(scopeTags, id: \.self) { tag in
-                    Text(verbatim: tag).tag(Optional(tag))
-                }
-            } label: {
-                Text("Tag")
-            }
-        } label: {
-            Label("Filter by tag", systemImage: tag == nil ? "tag" : "tag.fill")
-        }
+    private var effectiveQuery: LibraryQuery {
+        var result = untaggedQuery
+        if let tag { result.tag = tag }
+        return result
     }
 
     static func title(_ scope: LibraryScope) -> Text {
@@ -75,15 +45,57 @@ struct ItemListView: View {
     }
 }
 
-/// Rows for a query, with favorite and delete swipe actions. Used by the list and by the home search.
+/// A toolbar menu choosing one tag (or none) to narrow a list.
+struct TagFilterMenu: View {
+    @Binding var selection: String?
+    let tags: [String]
+
+    var body: some View {
+        Menu {
+            Picker(selection: $selection) {
+                Text("All tags").tag(String?.none)
+                ForEach(tags, id: \.self) { tag in
+                    Text(verbatim: tag).tag(Optional(tag))
+                }
+            } label: {
+                Text("Tag")
+            }
+        } label: {
+            Label("Filter by tag", systemImage: selection == nil ? "tag" : "tag.fill")
+        }
+    }
+
+    /// The tags used by `items`, in the order of `all` (most used first), without case duplicates.
+    static func tags(of items: [IndexedItem], in all: [String]) -> [String] {
+        let used = Set(items.flatMap(\.tags).map { $0.lowercased() })
+        var seen = Set<String>()
+        return all.filter { used.contains($0.lowercased()) && seen.insert($0.lowercased()).inserted }
+    }
+}
+
+/// A list of the items matching a query, with favorite and delete swipe actions.
+/// Used by the scope lists and by the home search.
 struct ItemResults: View {
+    private enum Failure {
+        case favorite, delete
+
+        var title: Text {
+            switch self {
+            case .favorite: Text("Couldn’t change the favorite")
+            case .delete: Text("Couldn’t delete the item")
+            }
+        }
+    }
+
     @Environment(AppModel.self) private var model
     let query: LibraryQuery
     @State private var pendingDelete: IndexedItem?
+    @State private var failure: Failure?
 
     var body: some View {
-        Group {
-            ForEach(model.items(query)) { item in
+        let items = model.items(query)
+        List {
+            ForEach(items) { item in
                 NavigationLink {
                     // Replaced by the item screen.
                     Text(verbatim: item.title)
@@ -92,7 +104,7 @@ struct ItemResults: View {
                 }
                 .swipeActions(edge: .leading) {
                     Button {
-                        Task { await model.toggleFavorite(item) }
+                        toggleFavorite(item)
                     } label: {
                         if item.favorite {
                             Label("Unfavorite", systemImage: "star.slash")
@@ -110,21 +122,44 @@ struct ItemResults: View {
                     }
                     .tint(.red)
                 }
-                .confirmationDialog(
-                    "Delete this item?", isPresented: isConfirmingDelete(item), titleVisibility: .visible,
-                    presenting: item
-                ) { item in
-                    Button("Delete", role: .destructive) {
-                        Task { await model.delete(item) }
-                    }
-                } message: { item in
-                    Text(verbatim: item.title)
+            }
+        }
+        .listStyle(.plain)
+        .overlay {
+            if items.isEmpty {
+                if let text = query.text {
+                    ContentUnavailableView.search(text: text)
+                } else {
+                    ContentUnavailableView("No items", systemImage: "tray")
                 }
             }
         }
+        .confirmationDialog(
+            "Delete this item?", isPresented: isPresented($pendingDelete), titleVisibility: .visible,
+            presenting: pendingDelete
+        ) { item in
+            Button("Delete", role: .destructive) { delete(item) }
+        } message: { item in
+            Text(verbatim: item.title)
+        }
+        .alert(failure?.title ?? Text(verbatim: ""), isPresented: isPresented($failure)) {
+            Button("OK") {}
+        }
     }
 
-    private func isConfirmingDelete(_ item: IndexedItem) -> Binding<Bool> {
-        Binding(get: { pendingDelete?.id == item.id }, set: { if !$0 { pendingDelete = nil } })
+    private func toggleFavorite(_ item: IndexedItem) {
+        Task {
+            do { try await model.toggleFavorite(item) } catch { failure = .favorite }
+        }
+    }
+
+    private func delete(_ item: IndexedItem) {
+        Task {
+            do { try await model.delete(item) } catch { failure = .delete }
+        }
+    }
+
+    private func isPresented<T>(_ value: Binding<T?>) -> Binding<Bool> {
+        Binding(get: { value.wrappedValue != nil }, set: { if !$0 { value.wrappedValue = nil } })
     }
 }
