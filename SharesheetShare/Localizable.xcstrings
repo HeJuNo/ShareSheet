@@ -1,0 +1,93 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "%lld items" : {
+      "extractionState" : "manual"
+    },
+    "Add tags" : {
+      "extractionState" : "manual"
+    },
+    "Article" : {
+      "extractionState" : "manual"
+    },
+    "Audio" : {
+      "extractionState" : "manual"
+    },
+    "Book" : {
+      "extractionState" : "manual"
+    },
+    "Cancel" : {
+      "extractionState" : "manual"
+    },
+    "Collection" : {
+      "extractionState" : "manual"
+    },
+    "Couldn’t save. Please try again." : {
+      "extractionState" : "manual"
+    },
+    "Create" : {
+      "extractionState" : "manual"
+    },
+    "Description" : {
+      "extractionState" : "manual"
+    },
+    "Document" : {
+      "extractionState" : "manual"
+    },
+    "Favorite" : {
+      "extractionState" : "manual"
+    },
+    "Highlights" : {
+      "extractionState" : "manual"
+    },
+    "Image" : {
+      "extractionState" : "manual"
+    },
+    "Link" : {
+      "extractionState" : "manual"
+    },
+    "Name" : {
+      "extractionState" : "manual"
+    },
+    "New %@" : {
+      "extractionState" : "manual"
+    },
+    "New collection" : {
+      "extractionState" : "manual"
+    },
+    "New collection…" : {
+      "extractionState" : "manual"
+    },
+    "Note" : {
+      "extractionState" : "manual"
+    },
+    "Nothing to save" : {
+      "extractionState" : "manual"
+    },
+    "Remove" : {
+      "extractionState" : "manual"
+    },
+    "Save" : {
+      "extractionState" : "manual"
+    },
+    "Tags" : {
+      "extractionState" : "manual"
+    },
+    "Text" : {
+      "extractionState" : "manual"
+    },
+    "Title" : {
+      "extractionState" : "manual"
+    },
+    "Top level" : {
+      "extractionState" : "manual"
+    },
+    "Unsorted" : {
+      "extractionState" : "manual"
+    },
+    "Video" : {
+      "extractionState" : "manual"
+    }
+  },
+  "version" : "1.0"
+}
