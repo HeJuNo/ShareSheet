@@ -26,6 +26,12 @@ targets:
     platform: iOS
     sources:
       - path: Sharesheet
+      # The "+" dialog reuses the share sheet's form.
+      - path: SharesheetShare/ShareFormModel.swift
+      - path: SharesheetShare/ShareFormView.swift
+      - path: SharesheetShare/SharedPayloadLoader.swift
+      - path: SharesheetShare/LinkPreviewLoader.swift
+      - path: SharesheetShare/Bounded.swift
     dependencies:
       - package: SharesheetKit
         product: SharesheetCore

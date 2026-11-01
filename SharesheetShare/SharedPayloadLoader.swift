@@ -44,6 +44,34 @@ struct SharedPayloadLoader {
         return (inputs, failed)
     }
 
+    /// Inputs typed or picked in the app: a link or text, and files, each copied like a shared attachment.
+    func load(text: String, files: [URL]) -> (inputs: [SharedInput], failed: Int) {
+        var inputs: [SharedInput] = []
+        var failed = 0
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = Self.webURL(trimmed) {
+            inputs.append(.url(url, pageTitle: nil, selection: nil))
+        } else if !trimmed.isEmpty {
+            inputs.append(PayloadClassifier.isTooLargeForText(trimmed)
+                ? ((try? saveText(trimmed, name: nil)) ?? .text(trimmed)) : .text(trimmed))
+        }
+        for file in files {
+            let directory = makeFileDirectory()
+            let scoped = file.startAccessingSecurityScopedResource()
+            defer { if scoped { file.stopAccessingSecurityScopedResource() } }
+            do {
+                let destination = directory.appending(path: file.lastPathComponent)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: file, to: destination)
+                let type = UTType(filenameExtension: file.pathExtension) ?? .data
+                inputs.append(.file(destination, contentType: type, name: file.lastPathComponent))
+            } catch {
+                failed += 1
+            }
+        }
+        return (inputs, failed)
+    }
+
     // MARK: Attachments
 
     /// Returns nil for attachments that are not items of their own (Safari's property list).

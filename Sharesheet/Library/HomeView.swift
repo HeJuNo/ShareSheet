@@ -7,6 +7,7 @@ struct HomeView: View {
     @Environment(AppModel.self) private var model
     @State private var searchText = ""
     @State private var showsSettings = false
+    @State private var addsItem = false
     @State private var asksCollectionName = false
     @State private var newCollectionName = ""
     @State private var searchTag: String?
@@ -63,6 +64,13 @@ struct HomeView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
+                        addsItem = true
+                    } label: {
+                        Label("Add", systemImage: "plus")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
                         showsSettings = true
                     } label: {
                         Label("Settings", systemImage: "gearshape")
@@ -71,6 +79,10 @@ struct HomeView: View {
             }
             .refreshable { await model.refresh() }
             .sheet(isPresented: $showsSettings) { SettingsView() }
+            .sheet(isPresented: $addsItem) {
+                AddItemView()
+                    .interactiveDismissDisabled()
+            }
             .alert("New collection", isPresented: $asksCollectionName) {
                 TextField("Name", text: $newCollectionName)
                 Button("Cancel", role: .cancel) {}

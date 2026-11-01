@@ -6,6 +6,7 @@ import SharesheetUI
 import UIKit
 
 /// State and actions of the share sheet: loads the payload, prefills the form, saves via the inbox.
+/// The app's "+" uses the same form with inputs it collected itself instead of an extension context.
 @MainActor
 @Observable
 final class ShareFormModel {
@@ -37,9 +38,17 @@ final class ShareFormModel {
     @ObservationIgnored private let payloadLoader = SharedPayloadLoader()
     @ObservationIgnored private let previewLoader = LinkPreviewLoader()
     @ObservationIgnored private weak var context: NSExtensionContext?
+    /// Set when the app collected the inputs; `onClose` then replaces completing the extension request.
+    @ObservationIgnored private var manualInput: (text: String, files: [URL])?
+    @ObservationIgnored private var onClose: ((_ saved: Bool) -> Void)?
 
     init(context: NSExtensionContext?) {
         self.context = context
+    }
+
+    init(text: String, files: [URL], onClose: @escaping (_ saved: Bool) -> Void) {
+        manualInput = (text, files)
+        self.onClose = onClose
     }
 
     var isMultiple: Bool { inputs.count > 1 }
@@ -51,8 +60,13 @@ final class ShareFormModel {
 
     func load() async {
         guard phase == .loading else { return }
-        let items = context?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
-        let loaded = await payloadLoader.load(items)
+        let loaded: (inputs: [SharedInput], failed: Int)
+        if let manualInput {
+            loaded = payloadLoader.load(text: manualInput.text, files: manualInput.files)
+        } else {
+            let items = context?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
+            loaded = await payloadLoader.load(items)
+        }
         failedCount = loaded.failed
         let normalized = ShareRequestBuilder.normalized(loaded.inputs)
         inputs = normalized.inputs
@@ -201,6 +215,7 @@ final class ShareFormModel {
             return true
         }
         context?.completeRequest(returningItems: nil)
+        onClose?(true)
     }
 
     func cancel() {
@@ -208,6 +223,7 @@ final class ShareFormModel {
         previewLoader.cancel()
         payloadLoader.removeTemporaryFiles()
         context?.cancelRequest(withError: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+        onClose?(false)
     }
 
     private func fail() {
