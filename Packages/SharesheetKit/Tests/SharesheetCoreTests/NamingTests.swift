@@ -31,3 +31,19 @@ import UniformTypeIdentifiers
     #expect(FileNamer.attachmentName(base: "Bastion Router", date: date, ext: "png", existing: []) == "bastion-router-2026-10-31.png")
     #expect(FileNamer.attachmentName(base: "Bastion Router", date: date, ext: "png", existing: ["bastion-router-2026-10-31.png"]) == "bastion-router-2026-10-31-2.png")
 }
+@Test func fileNamesStayWithinTheFileSystemByteLimit() {
+    let family = "👨‍👩‍👧‍👦"
+    #expect(family.utf8.count == 25)
+    for title in [String(repeating: family, count: 100), String(repeating: "🚀", count: 100), String(repeating: "é", count: 300)] {
+        let stem = FileNamer.sanitize(title)
+        #expect(!stem.isEmpty && stem != "Untitled")
+        #expect(stem.utf8.count <= 200)
+        #expect(stem.count <= 80)
+        #expect(title.hasPrefix(stem))  // cut on a grapheme boundary
+        let taken = Set(["\(stem).md"] + (2...120).map { "\(stem) \($0).md" })
+        #expect(FileNamer.uniqueName(base: stem, ext: "md", existing: taken).utf8.count <= 255)
+        let date = Date(timeIntervalSince1970: 0)
+        #expect(FileNamer.attachmentName(base: title, date: date, ext: "png", existing: []).utf8.count <= 255)
+    }
+    #expect(FileNamer.uniqueName(base: "a", ext: String(repeating: "x", count: 300), existing: []).utf8.count <= 255)
+}

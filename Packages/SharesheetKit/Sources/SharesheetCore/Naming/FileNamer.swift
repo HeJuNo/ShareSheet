@@ -5,7 +5,13 @@ public enum FileNamer {
     private static let reserved: Set<Character> = ["/", "\\", ":", "*", "?", "\"", "<", ">", "|"]
     private static let trimSet = CharacterSet(charactersIn: " .-")
 
-    /// Turns a title into a single safe file-name stem. Falls back to `Untitled`.
+    /// Stems stay under this many UTF-8 bytes, leaving room for a counter and an extension in the
+    /// file system's 255-byte name limit.
+    static let maxStemBytes = 200
+    static let maxExtensionBytes = 32
+
+    /// Turns a title into a single safe file-name stem of at most `maxLength` characters and `maxStemBytes`
+    /// UTF-8 bytes, cut on a character boundary. Falls back to `Untitled`.
     public static func sanitize(_ title: String, maxLength: Int = 80) -> String {
         var mapped = ""
         for character in title {
@@ -20,7 +26,8 @@ public enum FileNamer {
         }
         let collapsed = mapped.split(separator: " ").joined(separator: " ")
         let truncated = String(collapsed.trimmingCharacters(in: trimSet).prefix(maxLength))
-        let result = truncated.trimmingCharacters(in: trimSet)
+        let result = prefix(truncated.trimmingCharacters(in: trimSet), maxBytes: maxStemBytes)
+            .trimmingCharacters(in: trimSet)
         return result.isEmpty ? "Untitled" : result
     }
 
@@ -48,7 +55,21 @@ public enum FileNamer {
     }
 
     private static func name(stem: String, ext: String) -> String {
-        ext.isEmpty ? stem : "\(stem).\(ext)"
+        let ext = prefix(ext, maxBytes: maxExtensionBytes)
+        return ext.isEmpty ? stem : "\(stem).\(ext)"
+    }
+
+    /// The longest prefix of whole characters within `maxBytes` UTF-8 bytes.
+    private static func prefix(_ text: String, maxBytes: Int) -> String {
+        var result = ""
+        var bytes = 0
+        for character in text {
+            let size = character.utf8.count
+            guard bytes + size <= maxBytes else { break }
+            result.append(character)
+            bytes += size
+        }
+        return result
     }
 
     private static func utcDay(_ date: Date) -> String {
