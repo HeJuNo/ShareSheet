@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import OSLog
 import SharesheetCore
+import UIKit
 
 enum ICloudState: Equatable {
     /// The store factory has not answered yet.
@@ -25,6 +26,7 @@ enum AppModelError: Error, Equatable {
     private(set) var collections: [CollectionPath] = []
     private(set) var tags: [String] = []
     private(set) var pendingCaptureCount = 0
+    private(set) var failedCaptureCount = 0
     /// Inbox requests the last import could not take in (failed or unreadable); they stay in the inbox.
     private(set) var lastImportProblemCount = 0
     /// Bumped whenever the index changed, so views reading `items(_:)` re-render.
@@ -162,7 +164,9 @@ enum AppModelError: Error, Equatable {
         do {
             counts = try index.counts()
             tags = try index.allTags()
-            pendingCaptureCount = try index.search(LibraryQuery(scope: .all)).filter { $0.capture == .pending }.count
+            let all = try index.search(LibraryQuery(scope: .all))
+            pendingCaptureCount = all.filter { $0.capture == .pending }.count
+            failedCaptureCount = all.filter { $0.capture == .failed }.count
         } catch {
             Self.log.error("Reading the index failed: \(error)")
         }
@@ -174,6 +178,25 @@ enum AppModelError: Error, Equatable {
 
     /// Runs pending captures now; a request while a run is going makes it run once more.
     func capturePendingNow() {
+        startCaptures()
+    }
+
+    /// Makes every failed capture pending again, then runs the pending captures.
+    func retryFailedCaptures() async {
+        guard let store else { return }
+        do {
+            for item in try await store.listItems() where item.capture == .failed {
+                do {
+                    let saved = try await store.modify(item.id) { if $0.capture == .failed { $0.capture = .pending } }
+                    try? index.upsert(saved)
+                } catch StoreError.notFound {
+                    continue
+                }
+            }
+        } catch {
+            Self.log.error("Retrying failed captures failed: \(error)")
+        }
+        reloadFromIndex()
         startCaptures()
     }
 
@@ -376,9 +399,12 @@ extension AppModel {
         let index = openIndex()
         let fm = FileManager.default
         let inbox = Inbox(root: AppGroup.inboxURL() ?? fm.temporaryDirectory.appending(path: "Inbox"))
+        let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first ?? fm.temporaryDirectory
         let runner = CaptureRunner(
             store: ResolvingItemStore(library: library), index: index, capturer: WebPageCapturer(),
-            archiver: HTMLArchiver(fetcher: URLSessionFetcher()), favicons: FaviconFetcher())
+            archiver: HTMLArchiver(fetcher: URLSessionFetcher()), favicons: FaviconFetcher(),
+            attemptMarker: caches.appending(path: "capture-attempt"),
+            isForeground: { await UIApplication.shared.applicationState == .active })
         return AppModel(
             storeFactory: { await library.resolve() }, index: index, inbox: inbox, runner: runner,
             extensionTemporaryRoot: AppGroup.containerURL()?.appending(path: "Tmp", directoryHint: .isDirectory))

@@ -192,7 +192,7 @@ public struct InboxImporter: Sendable {
         _ entry: ShareEntry, request: ShareRequest, directory: URL, in collection: CollectionPath,
         willWrite: @Sendable (ItemID) throws -> Void
     ) async throws -> ItemID {
-        let isWebLink = entry.url != nil && entry.type != .text && entry.fileName == nil
+        let isWebLink = entry.url?.isWebPage == true && entry.type != .text && entry.fileName == nil
         let draft = ItemDraft(
             type: entry.type, url: entry.url, title: entry.title, description: entry.description,
             tags: request.tags, favorite: request.favorite, note: request.note,

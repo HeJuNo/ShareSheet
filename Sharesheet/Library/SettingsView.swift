@@ -45,6 +45,10 @@ struct SettingsView: View {
                         model.capturePendingNow()
                     }
                     .disabled(model.pendingCaptureCount == 0 || !model.isICloudAvailable)
+                    Button("Retry failed captures (\(model.failedCaptureCount))") {
+                        Task { await model.retryFailedCaptures() }
+                    }
+                    .disabled(model.failedCaptureCount == 0 || !model.isICloudAvailable)
                 }
                 Section {
                     LabeledContent("Version", value: Self.version)

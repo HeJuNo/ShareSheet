@@ -15,6 +15,8 @@ protocol PageCapturing: Sendable {
 
 enum CaptureError: Error, Equatable {
     case timeout, loadFailed(String)
+    /// A failed navigation in `NSURLErrorDomain`, with its code (offline, host not found, ...).
+    case network(Int)
 }
 
 /// Loads a page in an off-screen web view, scrolls it to trigger lazy content and takes a full-page snapshot.
@@ -233,7 +235,7 @@ private final class PageLoader: NSObject, WKNavigationDelegate {
     private func fail(_ error: any Error) {
         let ns = error as NSError
         if ns.domain == NSURLErrorDomain, ns.code == NSURLErrorCancelled { return }
-        finish(.failure(CaptureError.loadFailed(error.localizedDescription)))
+        finish(.failure(ns.domain == NSURLErrorDomain ? CaptureError.network(ns.code) : CaptureError.loadFailed(error.localizedDescription)))
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

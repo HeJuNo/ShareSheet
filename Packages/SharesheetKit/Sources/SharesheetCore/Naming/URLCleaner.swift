@@ -23,3 +23,11 @@ public enum URLCleaner {
         return lowered.hasPrefix("utm_") || trackingNames.contains(lowered)
     }
 }
+
+extension URL {
+    /// True for `http` and `https` URLs: the only ones a page capture can load.
+    public var isWebPage: Bool {
+        guard let scheme = scheme?.lowercased() else { return false }
+        return scheme == "http" || scheme == "https"
+    }
+}

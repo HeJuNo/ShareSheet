@@ -97,17 +97,21 @@ private struct Env {
         index = try LibraryIndex(path: root.appending(path: "index.sqlite"))
     }
 
-    func runner(_ capturer: FakeCapturer) -> CaptureRunner {
+    var marker: URL { root.appending(path: "capture-attempt") }
+
+    func runner(_ capturer: FakeCapturer, isForeground: Bool = true) -> CaptureRunner {
         CaptureRunner(
             store: store, index: index, capturer: capturer,
-            archiver: HTMLArchiver(fetcher: StubFetcher()), favicons: FaviconFetcher(fetcher: StubFetcher()))
+            archiver: HTMLArchiver(fetcher: StubFetcher()), favicons: FaviconFetcher(fetcher: StubFetcher()),
+            attemptMarker: marker, isForeground: { isForeground })
     }
 
     func makeItem(
-        _ title: String, capture: CaptureState?, created: Date = Date(), indexed: Bool = true
+        _ title: String, capture: CaptureState?, created: Date = Date(), indexed: Bool = true,
+        url: URL? = nil
     ) async throws -> Item {
         let item = try await store.create(
-            ItemDraft(type: .link, url: URL(string: "https://example.com/\(title)"), title: title,
+            ItemDraft(type: .link, url: url ?? URL(string: "https://example.com/\(title)"), title: title,
                       created: created, capture: capture),
             in: .unsorted)
         if indexed { try index.upsert(item) }
@@ -290,5 +294,120 @@ struct CaptureRunnerTests {
         #expect(result.done == 0)
         #expect(try env.index.search(LibraryQuery(scope: .all)).contains { $0.id == item.id } == false)
         #expect(try await env.store.listItems().contains { $0.id == item.id } == false)
+    }
+
+    // MARK: Crash protection
+
+    @Test func anAttemptLeftByACrashMarksThatItemFailed() async throws {
+        let env = try Env()
+        let crashed = try await env.makeItem("crashed", capture: .pending, created: Date().addingTimeInterval(-60))
+        let next = try await env.makeItem("next", capture: .pending)
+        try Data(crashed.id.relativePath.utf8).write(to: env.marker)
+        let capturer = FakeCapturer()
+
+        let result = await env.runner(capturer).runPending()
+
+        #expect(try await env.store.item(crashed.id).capture == .failed)
+        #expect(try env.index.search(LibraryQuery(scope: .all)).first { $0.id == crashed.id }?.capture == .failed)
+        #expect(capturer.captured == [next.url])
+        #expect(result.done == 1)
+        #expect(!FileManager.default.fileExists(atPath: env.marker.path))
+    }
+
+    @Test func theAttemptIsRecordedWhileCapturingAndClearedAfter() async throws {
+        let env = try Env()
+        let item = try await env.makeItem("page", capture: .pending)
+        let gate = Gate()
+        let runner = env.runner(FakeCapturer(.wait(gate)))
+
+        let run = Task { await runner.runPending() }
+        await gate.waitUntilEntered()
+        let recorded = try? String(contentsOf: env.marker, encoding: .utf8)
+        await gate.open()
+        _ = await run.value
+
+        #expect(recorded == item.id.relativePath)
+        #expect(!FileManager.default.fileExists(atPath: env.marker.path))
+    }
+
+    @Test func aCancelledCaptureClearsTheAttempt() async throws {
+        let env = try Env()
+        let item = try await env.makeItem("hang", capture: .pending)
+        let gate = Gate()
+        let runner = env.runner(FakeCapturer(.hangUntilCancelled(gate)))
+
+        let run = Task { await runner.runPending() }
+        await gate.waitUntilEntered()
+        run.cancel()
+        _ = await run.value
+
+        #expect(!FileManager.default.fileExists(atPath: env.marker.path))
+        #expect(try await env.store.item(item.id).capture == .pending)
+    }
+
+    @Test func anAttemptForAFinishedItemChangesNothing() async throws {
+        let env = try Env()
+        let done = try await env.makeItem("done", capture: .done)
+        try Data(done.id.relativePath.utf8).write(to: env.marker)
+
+        _ = await env.runner(FakeCapturer()).runPending()
+
+        #expect(try await env.store.item(done.id).capture == .done)
+        #expect(!FileManager.default.fileExists(atPath: env.marker.path))
+    }
+
+    // MARK: Transient failures
+
+    @Test(arguments: [
+        NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost, NSURLErrorTimedOut,
+        NSURLErrorDataNotAllowed, NSURLErrorInternationalRoamingOff, NSURLErrorCannotFindHost,
+        NSURLErrorCannotConnectToHost,
+    ])
+    func networkErrorsLeaveTheItemPending(code: Int) async throws {
+        let env = try Env()
+        let item = try await env.makeItem("offline", capture: .pending)
+
+        let result = await env.runner(FakeCapturer(error: .network(code))).runPending()
+
+        #expect(result.done == 0 && result.failed == 0)
+        #expect(try await env.store.item(item.id).capture == .pending)
+    }
+
+    @Test func otherLoadErrorsStillFail() async throws {
+        let env = try Env()
+        let item = try await env.makeItem("bad", capture: .pending)
+
+        _ = await env.runner(FakeCapturer(error: .network(NSURLErrorBadServerResponse))).runPending()
+
+        #expect(try await env.store.item(item.id).capture == .failed)
+    }
+
+    @Test func aTimeoutInTheBackgroundLeavesTheItemPending() async throws {
+        let env = try Env()
+        let item = try await env.makeItem("slow", capture: .pending)
+
+        let result = await env.runner(FakeCapturer(error: .timeout), isForeground: false).runPending()
+
+        #expect(result.failed == 0)
+        #expect(try await env.store.item(item.id).capture == .pending)
+    }
+
+    // MARK: Web pages only
+
+    @Test func pendingItemsWithoutAWebURLAreNotCaptured() async throws {
+        let env = try Env()
+        let ftp = try await env.makeItem("ftp", capture: .pending, url: URL(string: "ftp://example.com/file")!)
+        let mail = try await env.makeItem("mail", capture: .failed, url: URL(string: "mailto:a@example.com")!)
+        let capturer = FakeCapturer()
+        let runner = env.runner(capturer)
+
+        let result = await runner.runPending()
+        await runner.capture(mail.id)
+
+        #expect(capturer.captured.isEmpty)
+        #expect(result.done == 0 && result.failed == 0)
+        #expect(try await env.store.item(ftp.id).capture == nil)
+        #expect(try await env.store.item(mail.id).capture == nil)
+        #expect(try env.index.search(LibraryQuery(scope: .all)).first { $0.id == ftp.id }?.capture == nil)
     }
 }

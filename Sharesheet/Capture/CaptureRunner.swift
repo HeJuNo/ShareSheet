@@ -8,24 +8,42 @@ actor CaptureRunner {
     private let capturer: any PageCapturing
     private let archiver: HTMLArchiver
     private let favicons: FaviconFetcher
+    private let attemptMarker: URL?
+    private let isForeground: @Sendable () async -> Bool
     private var tail: Task<Void, Never>?
+    private var checkedAttemptMarker = false
 
-    init(store: any ItemStore, index: LibraryIndex, capturer: any PageCapturing, archiver: HTMLArchiver, favicons: FaviconFetcher) {
+    /// `attemptMarker` is a file naming the item being captured while a capture runs: one left behind means the
+    /// process died capturing it, and that item is marked failed instead of being tried again forever.
+    /// `isForeground` decides whether a capture timeout is final (foreground) or retried later (background).
+    init(
+        store: any ItemStore, index: LibraryIndex, capturer: any PageCapturing, archiver: HTMLArchiver,
+        favicons: FaviconFetcher, attemptMarker: URL? = nil,
+        isForeground: @escaping @Sendable () async -> Bool = { true }
+    ) {
         self.store = store
         self.index = index
         self.capturer = capturer
         self.archiver = archiver
         self.favicons = favicons
+        self.attemptMarker = attemptMarker
+        self.isForeground = isForeground
     }
 
     /// Captures items with `capture == .pending`, oldest first. Stops early when cancelled.
     func runPending(limit: Int? = nil) async -> (done: Int, failed: Int) {
-        await serialized { await $0.capturePending(limit: limit) }
+        await serialized {
+            await $0.failItemOfAnInterruptedAttempt()
+            return await $0.capturePending(limit: limit)
+        }
     }
 
     /// Captures one item with a url regardless of its current state (used for "Retry").
     func capture(_ id: ItemID) async {
-        await serialized { await $0.captureOne(id) }
+        await serialized {
+            await $0.failItemOfAnInterruptedAttempt()
+            await $0.captureOne(id)
+        }
     }
 
     /// Runs operations one after another: actor methods interleave at every `await`, which would let a
@@ -40,7 +58,58 @@ actor CaptureRunner {
         return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
 
-    private enum Outcome { case done, failed, cancelled, gone }
+    /// `deferred`: a transient failure; the item stays pending for a later run. `skipped`: not a web page.
+    private enum Outcome { case done, failed, deferred, skipped, cancelled, gone }
+
+    /// Once per runner (i.e. per launch): an attempt marker left behind means the process died capturing that
+    /// item; if it is still pending it is marked failed, so a page that crashes the app is not retried forever.
+    private func failItemOfAnInterruptedAttempt() async {
+        guard !checkedAttemptMarker, let attemptMarker else { return }
+        guard let data = try? Data(contentsOf: attemptMarker) else {
+            checkedAttemptMarker = true
+            return
+        }
+        let id = ItemID(relativePath: String(decoding: data, as: UTF8.self))
+        do {
+            let saved = try await store.modify(id) { if $0.capture == .pending { $0.capture = .failed } }
+            try? index.upsert(saved)
+        } catch StoreError.notFound {
+            // Deleted or moved meanwhile.
+        } catch {
+            return  // The library is unavailable: look again on the next run.
+        }
+        try? FileManager.default.removeItem(at: attemptMarker)
+        checkedAttemptMarker = true
+    }
+
+    private func recordAttempt(_ id: ItemID) {
+        guard let attemptMarker else { return }
+        try? FileManager.default.createDirectory(
+            at: attemptMarker.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? Data(id.relativePath.utf8).write(to: attemptMarker, options: .atomic)
+    }
+
+    private func clearAttempt() {
+        guard let attemptMarker else { return }
+        try? FileManager.default.removeItem(at: attemptMarker)
+    }
+
+    /// Network conditions that pass: the capture is tried again later rather than marked failed.
+    private static let transientNetworkCodes: Set<Int> = [
+        NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost, NSURLErrorTimedOut,
+        NSURLErrorDataNotAllowed, NSURLErrorInternationalRoamingOff, NSURLErrorCannotFindHost,
+        NSURLErrorCannotConnectToHost,
+    ]
+
+    private func isTransient(_ error: any Error) async -> Bool {
+        switch error {
+        case CaptureError.network(let code): return Self.transientNetworkCodes.contains(code)
+        case let error as URLError: return Self.transientNetworkCodes.contains(error.errorCode)
+        // A timeout in the background may only mean the system starved the web view.
+        case CaptureError.timeout: return !(await isForeground())
+        default: return false
+        }
+    }
 
     private func capturePending(limit: Int?) async -> (done: Int, failed: Int) {
         guard let all = try? await store.listItems() else { return (0, 0) }
@@ -52,7 +121,7 @@ actor CaptureRunner {
             switch await process(item) {
             case .done: done += 1
             case .failed: failed += 1
-            case .gone: continue
+            case .deferred, .skipped, .gone: continue
             case .cancelled: return (done, failed)
             }
         }
@@ -65,38 +134,48 @@ actor CaptureRunner {
     }
 
     /// `.done` only when both screenshot and archive were saved. A cancelled capture leaves the item untouched;
-    /// an item deleted or moved meanwhile (`.gone`) is neither written nor indexed.
+    /// an item deleted or moved meanwhile (`.gone`) is neither written nor indexed. An item without an http(s)
+    /// url gets no capture state at all, so it is not picked up again.
     private func process(_ item: Item) async -> Outcome {
+        guard let url = item.url, url.isWebPage else {
+            guard let saved = try? await store.modify(item.id, { $0.capture = nil }) else { return .gone }
+            try? index.upsert(saved)
+            return .skipped
+        }
         var screenshot: String?, archive: String?, archiveText: String?, iconURL: URL?
         var succeeded = false
+        var transient = false
 
-        if let url = item.url {
-            do {
-                let snapshot = try await capturer.capture(url)
-                try Task.checkCancellation()
-                screenshot = try await saveAttachment(snapshot.png, for: item, ext: "png")
-                let html = try await archiver.archive(html: snapshot.domHTML, baseURL: snapshot.finalURL)
-                try Task.checkCancellation()
-                archive = try await saveAttachment(Data(html.utf8), for: item, ext: "html")
-                archiveText = ArchiveText.extract(fromHTML: html)
-                iconURL = snapshot.iconURL
-                succeeded = true
-            } catch {
-                if error is CancellationError || Task.isCancelled { return .cancelled }
-            }
+        recordAttempt(item.id)
+        defer { clearAttempt() }
+        do {
+            let snapshot = try await capturer.capture(url)
+            try Task.checkCancellation()
+            screenshot = try await saveAttachment(snapshot.png, for: item, ext: "png")
+            let html = try await archiver.archive(html: snapshot.domHTML, baseURL: snapshot.finalURL)
+            try Task.checkCancellation()
+            archive = try await saveAttachment(Data(html.utf8), for: item, ext: "html")
+            archiveText = ArchiveText.extract(fromHTML: html)
+            iconURL = snapshot.iconURL
+            succeeded = true
+        } catch {
+            if error is CancellationError || Task.isCancelled { return .cancelled }
+            transient = await isTransient(error)
         }
 
         // One store step so edits made while capturing survive; only the capture fields are ours to change.
-        let (newScreenshot, newArchive, state) = (screenshot, archive, succeeded ? CaptureState.done : .failed)
+        // A transient failure keeps what was saved and leaves the item pending.
+        let state: CaptureState? = succeeded ? .done : transient ? nil : .failed
+        let (newScreenshot, newArchive) = (screenshot, archive)
         guard let saved = try? await store.modify(item.id, {
             if let newScreenshot { $0.screenshot = newScreenshot }
             if let newArchive { $0.archive = newArchive }
-            $0.capture = state
+            if let state { $0.capture = state }
         }) else { return .gone }
         try? index.upsert(saved)
         if let archive, let archiveText { try? index.setArchiveText(archiveText, forArchive: archive) }
-        if succeeded { await storeFavicon(host: item.url?.host(), iconURL: iconURL) }
-        return succeeded ? .done : .failed
+        if succeeded { await storeFavicon(host: url.host(), iconURL: iconURL) }
+        return succeeded ? .done : transient ? .deferred : .failed
     }
 
     private func saveAttachment(_ data: Data, for item: Item, ext: String) async throws -> String {

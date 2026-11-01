@@ -202,4 +202,24 @@ struct AppModelTests {
 
         #expect(model.pendingCaptureCount == 1)
     }
+
+    @Test func retryFailedCapturesMakesFailedItemsPendingAgain() async throws {
+        let env = try ModelEnv()
+        let url = URL(string: "https://example.com/a")!
+        let failed = try await env.store.create(ItemDraft(type: .link, url: url, title: "A", capture: .failed), in: .unsorted)
+        let other = try await env.store.create(ItemDraft(type: .link, url: url, title: "B", capture: .failed), in: .unsorted)
+        let done = try await env.store.create(ItemDraft(type: .link, url: url, title: "C", capture: .done), in: .unsorted)
+        let model = env.model()
+        await model.refresh()
+        #expect(model.failedCaptureCount == 2)
+
+        await model.retryFailedCaptures()
+
+        #expect(try await env.store.item(failed.id).capture == .pending)
+        #expect(try await env.store.item(other.id).capture == .pending)
+        #expect(try await env.store.item(done.id).capture == .done)
+        #expect(model.failedCaptureCount == 0)
+        #expect(model.pendingCaptureCount == 2)
+    }
 }
+

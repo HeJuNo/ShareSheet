@@ -270,3 +270,17 @@ private func importer(_ inbox: Inbox, _ store: any ItemStore) -> InboxImporter {
     let all = try await store.listItems()
     #expect(all.count == 1 && all[0].note == "old" && all[0].favorite && all[0].highlights == ["h1"])
 }
+
+@Test func onlyHTTPLinksArePendingCapture() async throws {
+    let (inbox, _) = try makeInbox()
+    let (store, _) = try makeStore()
+    let urls = ["ftp://a.b/x", "mailto:a@b.c", "file:///etc/hosts", "HTTPS://a.b/up", "http://a.b/plain"]
+    for (index, url) in urls.enumerated() {
+        try inbox.enqueue(
+            .fixture(created: Date(timeIntervalSince1970: Double(index)), entries: [.fixture(url: URL(string: url)!, title: "L\(index)")]),
+            files: [:])
+    }
+    _ = await importer(inbox, store).importAll()
+    let byTitle = Dictionary(uniqueKeysWithValues: try await store.listItems().map { ($0.title, $0.capture) })
+    #expect(byTitle == ["L0": nil, "L1": nil, "L2": nil, "L3": .pending, "L4": .pending])
+}
