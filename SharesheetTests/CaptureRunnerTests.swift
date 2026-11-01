@@ -103,6 +103,22 @@ private struct StubEmbeds: ResourceFetching {
     }
 }
 
+/// Answers every request with `body` and remembers what was asked.
+private final class RecordingEmbeds: ResourceFetching, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _requested: [URL] = []
+    let body: String
+
+    init(body: String) { self.body = body }
+
+    var requested: [URL] { lock.withLock { _requested } }
+
+    func fetch(_ url: URL) async throws -> (data: Data, mimeType: String?) {
+        lock.withLock { _requested.append(url) }
+        return (Data(body.utf8), "application/json")
+    }
+}
+
 private struct Env {
     let root: URL
     let store: FolderItemStore
@@ -117,11 +133,14 @@ private struct Env {
 
     var marker: URL { root.appending(path: "capture-attempt") }
 
-    func runner(_ capturer: FakeCapturer, isForeground: Bool = true, embeds: StubEmbeds? = nil) -> CaptureRunner {
+    func runner(
+        _ capturer: FakeCapturer, isForeground: Bool = true, embeds: (any ResourceFetching)? = nil,
+        redirects: [URL: URL] = [:]
+    ) -> CaptureRunner {
         CaptureRunner(
             store: store, index: index, capturer: capturer,
             archiver: HTMLArchiver(fetcher: StubFetcher()), favicons: FaviconFetcher(fetcher: StubFetcher()),
-            embeds: embeds, attemptMarker: marker, isForeground: { isForeground })
+            embeds: embeds, resolveRedirects: { redirects[$0] }, attemptMarker: marker, isForeground: { isForeground })
     }
 
     func makeItem(
@@ -193,6 +212,23 @@ struct CaptureRunnerTests {
         #expect(saved.description == "Hello & welcome")
         let hits = try env.index.search(LibraryQuery(text: "welcome", scope: .all))
         #expect(hits.map(\.id) == [item.id])
+    }
+
+    @Test func facebookShareLinkIsEmbeddedFromWhereItRedirects() async throws {
+        let env = try Env()
+        let share = URL(string: "https://www.facebook.com/share/1EaxwpwnkH/?mibextid=wwXIfr")!
+        let photo = URL(string: "https://www.facebook.com/photo.php?fbid=1671309198211227&type=3")!
+        _ = try await env.makeItem("share", capture: .pending, url: share)
+        let capturer = FakeCapturer()
+        let embeds = RecordingEmbeds(body: #"{"html":"<div class=\"fb-post\"></div>"}"#)
+
+        let result = await env.runner(capturer, embeds: embeds, redirects: [share: photo]).runPending()
+
+        #expect(result.done == 1)
+        #expect(capturer.renderedHTML.count == 1)
+        let asked = try #require(embeds.requested.first)
+        let query = URLComponents(url: asked, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        #expect(query.first { $0.name == "url" }?.value == photo.absoluteString)
     }
 
     @Test func socialPostWithoutEmbedIsCapturedAsAPage() async throws {

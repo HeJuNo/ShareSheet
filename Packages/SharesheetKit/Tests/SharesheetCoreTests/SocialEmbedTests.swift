@@ -38,6 +38,13 @@ struct SocialEmbedTests {
         #expect(post.path() == "/v25.0/oembed_post")
     }
 
+    @Test func onlyFacebookShareLinksNeedResolving() {
+        #expect(SocialEmbed.needsResolving(URL(string: "https://www.facebook.com/share/1EaxwpwnkH/?mibextid=wwXIfr")!))
+        #expect(SocialEmbed.needsResolving(URL(string: "https://www.facebook.com/share/v/abc/")!))
+        #expect(!SocialEmbed.needsResolving(URL(string: "https://www.facebook.com/photo.php?fbid=1")!))
+        #expect(!SocialEmbed.needsResolving(URL(string: "https://x.com/a/status/1")!))
+    }
+
     @Test func decodesTextAndAuthorFromAnXResponse() throws {
         let json = #"""
             {"author_name":"Ryven","html":"<blockquote class=\"twitter-tweet\"><p lang=\"en\" dir=\"ltr\">This is getting scary.<br><br>15 repos &amp; more <a href=\"https://t.co/x\">pic.twitter.com/x</a></p>&mdash; Ryven (@imryven) <a href=\"https://x.com/a\">November 1, 2026</a></blockquote>\n"}

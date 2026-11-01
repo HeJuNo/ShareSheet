@@ -55,6 +55,12 @@ public enum SocialEmbed {
         return components?.url
     }
 
+    /// Facebook's share links (`/share/…`, what its app hands out) are short links the oEmbed endpoints refuse;
+    /// they redirect to the post itself, which is then embedded.
+    public static func needsResolving(_ url: URL) -> Bool {
+        platform(of: url) == .facebook && url.path().lowercased().hasPrefix("/share/")
+    }
+
     public static func decode(_ data: Data) throws -> Response {
         try JSONDecoder().decode(Response.self, from: data)
     }

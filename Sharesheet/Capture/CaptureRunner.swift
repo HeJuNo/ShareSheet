@@ -10,6 +10,8 @@ actor CaptureRunner {
     private let favicons: FaviconFetcher
     /// Fetches oEmbed responses for social posts; nil captures every link as a page.
     private let embeds: (any ResourceFetching)?
+    /// Where a short link redirects to; nil when it cannot be followed.
+    private let resolveRedirects: @Sendable (URL) async -> URL?
     private let attemptMarker: URL?
     private let isForeground: @Sendable () async -> Bool
     private var tail: Task<Void, Never>?
@@ -20,10 +22,12 @@ actor CaptureRunner {
     /// `isForeground` decides whether a capture timeout is final (foreground) or retried later (background).
     init(
         store: any ItemStore, index: LibraryIndex, capturer: any PageCapturing, archiver: HTMLArchiver,
-        favicons: FaviconFetcher, embeds: (any ResourceFetching)? = nil, attemptMarker: URL? = nil,
-        isForeground: @escaping @Sendable () async -> Bool = { true }
+        favicons: FaviconFetcher, embeds: (any ResourceFetching)? = nil,
+        resolveRedirects: @escaping @Sendable (URL) async -> URL? = CaptureRunner.followRedirects,
+        attemptMarker: URL? = nil, isForeground: @escaping @Sendable () async -> Bool = { true }
     ) {
         self.embeds = embeds
+        self.resolveRedirects = resolveRedirects
         self.store = store
         self.index = index
         self.capturer = capturer
@@ -192,12 +196,29 @@ actor CaptureRunner {
 
     /// The post rendered from its official embed, nil for other links or when the platform does not serve it
     /// (private, deleted, offline): the link is then captured as a page.
-    private func socialEmbed(for url: URL) async -> (page: String, text: String?)? {
-        guard let embeds, let platform = SocialEmbed.platform(of: url), let endpoint = SocialEmbed.endpoint(for: url),
+    private func socialEmbed(for link: URL) async -> (page: String, text: String?)? {
+        guard let embeds else { return nil }
+        var url = link
+        if SocialEmbed.needsResolving(link) {
+            guard let resolved = await resolveRedirects(link) else { return nil }
+            url = resolved
+        }
+        guard let platform = SocialEmbed.platform(of: url), let endpoint = SocialEmbed.endpoint(for: url),
               let data = try? await embeds.fetch(endpoint).data,
               let response = try? SocialEmbed.decode(data)
         else { return nil }
         return (SocialEmbed.page(for: response, platform: platform), SocialEmbed.text(of: response))
+    }
+
+    /// The URL a plain request for `url` ends up at after redirects; only the response head is waited for.
+    static let followRedirects: @Sendable (URL) async -> URL? = { url in
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        guard let (bytes, response) = try? await URLSession(configuration: .ephemeral).bytes(for: request) else {
+            return nil
+        }
+        bytes.task.cancel()
+        return response.url
     }
 
     private func saveAttachment(_ data: Data, for item: Item, ext: String) async throws -> String {
