@@ -123,6 +123,8 @@ targets:
         buildPhase: resources
       - path: SharesheetTests/Fixtures/redirect-page.html
         buildPhase: resources
+      - path: SharesheetTests/Fixtures/color-page.html
+        buildPhase: resources
     dependencies:
       - target: Sharesheet
     settings:

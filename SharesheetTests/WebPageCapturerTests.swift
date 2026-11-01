@@ -24,6 +24,33 @@ struct WebPageCapturerTests {
         #expect(snapshot.truncated == false)
     }
 
+    @Test func snapshotContainsRenderedContentTopToBottom() async throws {
+        let capturer = WebPageCapturer()
+
+        let snapshot = try await capturer.capture(try fixture("color-page"))
+
+        let image = try #require(UIImage(data: snapshot.png)?.cgImage)
+        let top = pixel(image, x: 390, y: 100)
+        let bottom = pixel(image, x: 390, y: image.height - 100)
+        #expect(isClose(top, to: [255, 0, 0]), "top pixel \(top)")
+        #expect(isClose(bottom, to: [0, 0, 255]), "bottom pixel \(bottom)")
+    }
+
+    /// Colour matching tolerates small differences from colour-space conversion.
+    private func isClose(_ rgb: [UInt8], to expected: [UInt8]) -> Bool {
+        zip(rgb, expected).allSatisfy { abs(Int($0) - Int($1)) <= 8 }
+    }
+
+    /// The RGB value of one pixel, read from a redraw in a known sRGB format.
+    private func pixel(_ image: CGImage, x: Int, y: Int) -> [UInt8] {
+        var data = [UInt8](repeating: 0, count: 4)
+        let context = CGContext(
+            data: &data, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        context.draw(image, in: CGRect(x: -x, y: y - image.height + 1, width: image.width, height: image.height))
+        return Array(data.prefix(3))
+    }
+
     @Test func stalledPageTimesOutAfterLoad() async throws {
         let capturer = WebPageCapturer(loadTimeout: .seconds(10), postLoadBudget: .seconds(1))
         let url = try fixture("busy-page")

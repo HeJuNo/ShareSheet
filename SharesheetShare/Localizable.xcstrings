@@ -1,6 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ items" : {
+
+    },
+    "%@ items couldn’t be loaded" : {
+
+    },
     "%lld items" : {
       "extractionState" : "manual",
       "localizations" : {

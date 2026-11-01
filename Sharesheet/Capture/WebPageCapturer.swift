@@ -29,6 +29,7 @@ final class WebPageCapturer: PageCapturing {
     private let postLoadBudget: Duration
     private let maxHeight: CGFloat
     private let viewportHeight: CGFloat = 844
+    private let tileHeight: CGFloat = 2_000
     /// The window web views are hosted in; created on first capture.
     private(set) var hostWindow: UIWindow?
 
@@ -78,11 +79,14 @@ final class WebPageCapturer: PageCapturing {
         webView.layoutIfNeeded()
         try await Task.sleep(for: .milliseconds(300))
 
-        let snapshotConfig = WKSnapshotConfiguration()
-        snapshotConfig.rect = CGRect(x: 0, y: 0, width: width, height: height)
         let screenScale = window.traitCollection.displayScale > 0 ? window.traitCollection.displayScale : UIScreen.main.scale
-        snapshotConfig.snapshotWidth = NSNumber(value: Double(width * scale / screenScale))
-        let image = try await webView.takeSnapshot(configuration: snapshotConfig)
+        let tiles = try await snapshotTiles(webView, height: height, screenScale: screenScale)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { _ in
+            for (y, tile) in tiles { tile.draw(in: CGRect(x: 0, y: y, width: width, height: min(tileHeight, height - y))) }
+        }
         guard let png = image.pngData() else { throw CaptureError.loadFailed("snapshot could not be encoded") }
         try Task.checkCancellation()
 
@@ -93,6 +97,20 @@ final class WebPageCapturer: PageCapturing {
         return PageSnapshot(
             png: png, domHTML: dom, finalURL: webView.url ?? url,
             iconURL: icon.flatMap { $0.isEmpty ? nil : URL(string: $0) }, truncated: fullHeight > maxHeight)
+    }
+
+    /// Snapshots the page in horizontal strips of at most `tileHeight`, returned with their top offsets.
+    /// One snapshot taller than the GPU's texture limit (about 6,000 pt on a 3x iPhone) comes back blank.
+    private func snapshotTiles(_ webView: WKWebView, height: CGFloat, screenScale: CGFloat) async throws -> [(CGFloat, UIImage)] {
+        var tiles: [(CGFloat, UIImage)] = []
+        for y in stride(from: CGFloat(0), to: height, by: tileHeight) {
+            try Task.checkCancellation()
+            let config = WKSnapshotConfiguration()
+            config.rect = CGRect(x: 0, y: y, width: width, height: min(tileHeight, height - y))
+            config.snapshotWidth = NSNumber(value: Double(width * scale / screenScale))
+            tiles.append((y, try await webView.takeSnapshot(configuration: config)))
+        }
+        return tiles
     }
 
     /// Scrolls down one viewport every 150 ms until the document stops growing or reaches `maxHeight`,
