@@ -63,6 +63,14 @@ private final class FakeCapturer: PageCapturing, @unchecked Sendable {
     convenience init(error: CaptureError) { self.init(.fail(error)) }
 
     var captured: [URL] { lock.withLock { _captured } }
+    private var _renderedHTML: [String] = []
+    var renderedHTML: [String] { lock.withLock { _renderedHTML } }
+
+    @MainActor func capture(html: String, baseURL: URL) async throws -> PageSnapshot {
+        lock.withLock { _renderedHTML.append(html) }
+        return PageSnapshot(png: tinyPNG, domHTML: "<html><body><iframe></iframe></body></html>", finalURL: baseURL,
+                            iconURL: nil, truncated: false)
+    }
 
     @MainActor func capture(_ url: URL) async throws -> PageSnapshot {
         lock.withLock { _captured.append(url) }
@@ -85,6 +93,16 @@ private struct StubFetcher: ResourceFetching {
     func fetch(_ url: URL) async throws -> (data: Data, mimeType: String?) { (tinyPNG, "image/png") }
 }
 
+/// Answers every oEmbed request with `body`, or fails like an unreachable or refusing endpoint when nil.
+private struct StubEmbeds: ResourceFetching {
+    let body: String?
+
+    func fetch(_ url: URL) async throws -> (data: Data, mimeType: String?) {
+        guard let body else { throw URLError(.badServerResponse) }
+        return (Data(body.utf8), "application/json")
+    }
+}
+
 private struct Env {
     let root: URL
     let store: FolderItemStore
@@ -99,11 +117,11 @@ private struct Env {
 
     var marker: URL { root.appending(path: "capture-attempt") }
 
-    func runner(_ capturer: FakeCapturer, isForeground: Bool = true) -> CaptureRunner {
+    func runner(_ capturer: FakeCapturer, isForeground: Bool = true, embeds: StubEmbeds? = nil) -> CaptureRunner {
         CaptureRunner(
             store: store, index: index, capturer: capturer,
             archiver: HTMLArchiver(fetcher: StubFetcher()), favicons: FaviconFetcher(fetcher: StubFetcher()),
-            attemptMarker: marker, isForeground: { isForeground })
+            embeds: embeds, attemptMarker: marker, isForeground: { isForeground })
     }
 
     func makeItem(
@@ -154,6 +172,40 @@ struct CaptureRunnerTests {
         let hits = try env.index.search(LibraryQuery(text: "lorem", scope: .all))
         #expect(hits.map(\.id) == [item.id])
         #expect(try env.index.favicon(host: "example.com") != nil)
+    }
+
+    @Test func socialPostIsRenderedFromItsEmbedWithTheTextKept() async throws {
+        let env = try Env()
+        let url = URL(string: "https://x.com/imryven/status/2116689928809595172")!
+        let item = try await env.makeItem("post", capture: .pending, url: url)
+        let capturer = FakeCapturer()
+        let embeds = StubEmbeds(body: #"""
+            {"author_name":"Ryven","html":"<blockquote class=\"twitter-tweet\"><p>Hello &amp; welcome</p>&mdash; Ryven</blockquote>"}
+            """#)
+
+        let result = await env.runner(capturer, embeds: embeds).runPending()
+
+        #expect(result.done == 1)
+        #expect(capturer.captured.isEmpty)
+        #expect(capturer.renderedHTML.count == 1)
+        #expect(capturer.renderedHTML.first?.contains("twitter-tweet") == true)
+        let saved = try await env.store.item(item.id)
+        #expect(saved.description == "Hello & welcome")
+        let hits = try env.index.search(LibraryQuery(text: "welcome", scope: .all))
+        #expect(hits.map(\.id) == [item.id])
+    }
+
+    @Test func socialPostWithoutEmbedIsCapturedAsAPage() async throws {
+        let env = try Env()
+        let url = URL(string: "https://www.instagram.com/p/private/")!
+        _ = try await env.makeItem("private", capture: .pending, url: url)
+        let capturer = FakeCapturer()
+
+        let result = await env.runner(capturer, embeds: StubEmbeds(body: nil)).runPending()
+
+        #expect(result.done == 1)
+        #expect(capturer.captured == [url])
+        #expect(capturer.renderedHTML.isEmpty)
     }
 
     @Test func runnerSkipsNonPending() async throws {

@@ -413,7 +413,7 @@ extension AppModel {
         let runner = CaptureRunner(
             store: ResolvingItemStore(library: library), index: index, capturer: WebPageCapturer(),
             archiver: HTMLArchiver(fetcher: URLSessionFetcher()), favicons: FaviconFetcher(),
-            attemptMarker: caches.appending(path: "capture-attempt"),
+            embeds: URLSessionFetcher(), attemptMarker: caches.appending(path: "capture-attempt"),
             isForeground: { await UIApplication.shared.applicationState == .active })
         return AppModel(
             storeFactory: { await library.resolve() }, index: index, inbox: inbox, runner: runner,

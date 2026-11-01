@@ -8,6 +8,8 @@ actor CaptureRunner {
     private let capturer: any PageCapturing
     private let archiver: HTMLArchiver
     private let favicons: FaviconFetcher
+    /// Fetches oEmbed responses for social posts; nil captures every link as a page.
+    private let embeds: (any ResourceFetching)?
     private let attemptMarker: URL?
     private let isForeground: @Sendable () async -> Bool
     private var tail: Task<Void, Never>?
@@ -18,9 +20,10 @@ actor CaptureRunner {
     /// `isForeground` decides whether a capture timeout is final (foreground) or retried later (background).
     init(
         store: any ItemStore, index: LibraryIndex, capturer: any PageCapturing, archiver: HTMLArchiver,
-        favicons: FaviconFetcher, attemptMarker: URL? = nil,
+        favicons: FaviconFetcher, embeds: (any ResourceFetching)? = nil, attemptMarker: URL? = nil,
         isForeground: @escaping @Sendable () async -> Bool = { true }
     ) {
+        self.embeds = embeds
         self.store = store
         self.index = index
         self.capturer = capturer
@@ -142,17 +145,25 @@ actor CaptureRunner {
             try? index.upsert(saved)
             return .skipped
         }
-        var screenshot: String?, archive: String?, archiveText: String?, iconURL: URL?
+        var screenshot: String?, archive: String?, archiveText: String?, iconURL: URL?, postText: String?
         var succeeded = false
         var transient = false
 
         recordAttempt(item.id)
         defer { clearAttempt() }
         do {
-            let snapshot = try await capturer.capture(url)
+            let embed = await socialEmbed(for: url)
+            let snapshot: PageSnapshot
+            if let embed {
+                snapshot = try await capturer.capture(html: embed.page, baseURL: url)
+                postText = embed.text
+            } else {
+                snapshot = try await capturer.capture(url)
+            }
             try Task.checkCancellation()
             screenshot = try await saveAttachment(snapshot.png, for: item, ext: "png")
-            let html = try await archiver.archive(html: snapshot.domHTML, baseURL: snapshot.finalURL)
+            // An embedded post's rendered DOM is only iframes; its markup still carries the post text.
+            let html = try await archiver.archive(html: embed?.page ?? snapshot.domHTML, baseURL: snapshot.finalURL)
             try Task.checkCancellation()
             archive = try await saveAttachment(Data(html.utf8), for: item, ext: "html")
             archiveText = ArchiveText.extract(fromHTML: html)
@@ -166,16 +177,27 @@ actor CaptureRunner {
         // One store step so edits made while capturing survive; only the capture fields are ours to change.
         // A transient failure keeps what was saved and leaves the item pending.
         let state: CaptureState? = succeeded ? .done : transient ? nil : .failed
-        let (newScreenshot, newArchive) = (screenshot, archive)
+        let (newScreenshot, newArchive, newText) = (screenshot, archive, postText)
         guard let saved = try? await store.modify(item.id, {
             if let newScreenshot { $0.screenshot = newScreenshot }
             if let newArchive { $0.archive = newArchive }
+            if let newText, ($0.description ?? "").isEmpty { $0.description = newText }
             if let state { $0.capture = state }
         }) else { return .gone }
         try? index.upsert(saved)
         if let archive, let archiveText { try? index.setArchiveText(archiveText, forArchive: archive) }
         if succeeded { await storeFavicon(host: url.host(), iconURL: iconURL) }
         return succeeded ? .done : transient ? .deferred : .failed
+    }
+
+    /// The post rendered from its official embed, nil for other links or when the platform does not serve it
+    /// (private, deleted, offline): the link is then captured as a page.
+    private func socialEmbed(for url: URL) async -> (page: String, text: String?)? {
+        guard let embeds, let platform = SocialEmbed.platform(of: url), let endpoint = SocialEmbed.endpoint(for: url),
+              let data = try? await embeds.fetch(endpoint).data,
+              let response = try? SocialEmbed.decode(data)
+        else { return nil }
+        return (SocialEmbed.page(for: response, platform: platform), SocialEmbed.text(of: response))
     }
 
     private func saveAttachment(_ data: Data, for item: Item, ext: String) async throws -> String {

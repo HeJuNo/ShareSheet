@@ -11,6 +11,14 @@ struct PageSnapshot: Sendable {
 
 protocol PageCapturing: Sendable {
     @MainActor func capture(_ url: URL) async throws -> PageSnapshot
+    /// Renders `html` as if loaded from `baseURL`, waiting for embedded posts (iframes) to finish drawing.
+    @MainActor func capture(html: String, baseURL: URL) async throws -> PageSnapshot
+}
+
+extension PageCapturing {
+    @MainActor func capture(html: String, baseURL: URL) async throws -> PageSnapshot {
+        throw CaptureError.loadFailed("rendering markup is not supported")
+    }
 }
 
 enum CaptureError: Error, Equatable {
@@ -29,6 +37,7 @@ final class WebPageCapturer: PageCapturing {
     private let postLoadBudget: Duration
     private let maxHeight: CGFloat
     private let viewportHeight: CGFloat = 844
+    private let embedWait: Duration = .seconds(12)
     /// The window web views are hosted in; created on first capture.
     private(set) var hostWindow: UIWindow?
 
@@ -44,6 +53,14 @@ final class WebPageCapturer: PageCapturing {
     }
 
     func capture(_ url: URL) async throws -> PageSnapshot {
+        try await capture(.url(url), reportedURL: url)
+    }
+
+    func capture(html: String, baseURL: URL) async throws -> PageSnapshot {
+        try await capture(.html(html, baseURL: baseURL), reportedURL: baseURL)
+    }
+
+    private func capture(_ source: PageSource, reportedURL url: URL) async throws -> PageSnapshot {
         let window = resolveHostWindow()
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
@@ -67,10 +84,11 @@ final class WebPageCapturer: PageCapturing {
         let terminated = CaptureError.loadFailed("web content process terminated")
         try await Self.bounded(loadTimeout) { fail in
             loader.onTerminate = { fail(terminated) }
-            try await loader.load(url, in: webView)
+            try await loader.load(source, in: webView)
         }
         return try await Self.bounded(postLoadBudget) { [self] fail in
             loader.onTerminate = { fail(terminated) }
+            if case .html = source { try await waitForEmbeds(webView) }
             return try await render(webView, in: window, url: url)
         }
     }
@@ -96,6 +114,38 @@ final class WebPageCapturer: PageCapturing {
         return PageSnapshot(
             png: png, domHTML: dom, finalURL: webView.url ?? url,
             iconURL: icon.flatMap { $0.isEmpty ? nil : URL(string: $0) }, truncated: fullHeight > maxHeight)
+    }
+
+    /// Embed scripts replace the markup with iframes after the page has loaded. Waits until every iframe is
+    /// drawn and its height has held for half a second, then a moment for its images; at most `embedWait`.
+    private func waitForEmbeds(_ webView: WKWebView) async throws {
+        let script = """
+            (function () {
+              var frames = document.querySelectorAll('iframe');
+              if (frames.length === 0) { return -1; }
+              var total = 0;
+              for (var i = 0; i < frames.length; i++) {
+                if (frames[i].offsetHeight < 100) { return -1; }
+                total += frames[i].offsetHeight;
+              }
+              return total;
+            })()
+            """
+        let clock = ContinuousClock()
+        let deadline = clock.now + embedWait
+        var lastHeight = -1, stableSince = clock.now
+        while clock.now < deadline {
+            try Task.checkCancellation()
+            let height = (try? await webView.evaluateJavaScript(script) as? NSNumber)?.intValue ?? -1
+            if height != lastHeight {
+                lastHeight = height
+                stableSince = clock.now
+            } else if height > 0, clock.now - stableSince >= .milliseconds(500) {
+                try await Task.sleep(for: .seconds(1))
+                return
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     /// Snapshots the page one viewport at a time, scrolling between shots, and returns each shot with its top offset.
@@ -257,6 +307,11 @@ private final class Outcome<T: Sendable>: @unchecked Sendable {
     }
 }
 
+private enum PageSource {
+    case url(URL)
+    case html(String, baseURL: URL)
+}
+
 /// Bridges `WKNavigationDelegate` callbacks for one top-level load to async/await.
 @MainActor
 private final class PageLoader: NSObject, WKNavigationDelegate {
@@ -264,15 +319,18 @@ private final class PageLoader: NSObject, WKNavigationDelegate {
     private var continuation: CheckedContinuation<Void, any Error>?
     private weak var webView: WKWebView?
 
-    func load(_ url: URL, in webView: WKWebView) async throws {
+    func load(_ source: PageSource, in webView: WKWebView) async throws {
         self.webView = webView
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 self.continuation = continuation
                 if Task.isCancelled { finish(.failure(CancellationError())); return }
-                if url.isFileURL {
+                switch source {
+                case .html(let html, let baseURL):
+                    webView.loadHTMLString(html, baseURL: baseURL)
+                case .url(let url) where url.isFileURL:
                     webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
-                } else {
+                case .url(let url):
                     webView.load(URLRequest(url: url))
                 }
             }

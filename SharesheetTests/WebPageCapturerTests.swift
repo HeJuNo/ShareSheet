@@ -69,6 +69,30 @@ struct WebPageCapturerTests {
         }
     }
 
+    /// Embedded posts arrive as iframes after load; the shot waits until they are drawn.
+    @Test func markupIsRenderedOnceItsEmbedIsDrawn() async throws {
+        let capturer = WebPageCapturer()
+        let html = """
+            <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>body { margin: 0; } iframe { display: block; width: 100%; height: 600px; border: 0; }</style></head>
+            <body><script>
+            setTimeout(function () {
+              var f = document.createElement('iframe');
+              f.srcdoc = '<body style="margin:0;background:#00f"></body>';
+              document.body.appendChild(f);
+            }, 800);
+            </script></body></html>
+            """
+
+        let snapshot = try await capturer.capture(html: html, baseURL: URL(string: "https://example.com/post")!)
+
+        let image = try #require(UIImage(data: snapshot.png)?.cgImage)
+        #expect(snapshot.finalURL == URL(string: "https://example.com/post"))
+        #expect(image.height == 844 * 2)
+        let middle = pixel(image, x: 390, y: 600)
+        #expect(isClose(middle, to: [0, 0, 255]), "embed pixel \(middle)")
+    }
+
     /// Colour matching tolerates small differences from colour-space conversion.
     private func isClose(_ rgb: [UInt8], to expected: [UInt8]) -> Bool {
         zip(rgb, expected).allSatisfy { abs(Int($0) - Int($1)) <= 8 }
