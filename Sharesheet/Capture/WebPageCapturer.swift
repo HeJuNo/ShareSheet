@@ -49,6 +49,10 @@ final class WebPageCapturer: PageCapturing {
         config.websiteDataStore = .nonPersistent()
         let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: width, height: viewportHeight), configuration: config)
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        // The scroll edge effect fades the top of every viewport shot, which shows as a pale band at each seam.
+        if #available(iOS 26.0, *) {
+            webView.scrollView.topEdgeEffect.isHidden = true
+        }
         webView.accessibilityElementsHidden = true
         window.addSubview(webView)
         let loader = PageLoader()
