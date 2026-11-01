@@ -1,3 +1,5 @@
+import QuickLook
+import QuickLookThumbnailing
 import SharesheetCore
 import SharesheetUI
 import SwiftUI
@@ -75,6 +77,13 @@ struct ItemDetailView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if let file = item?.file {
+                    AttachmentShareButton(relativePath: file)
+                } else if let url = item?.url {
+                    ShareLink(item: url)
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     confirmsDelete = true
@@ -362,17 +371,41 @@ struct ItemDetailView: View {
     }
 }
 
-/// A file item's attachment in Quick Look, or "File missing".
+/// A file item's attachment as a Quick Look thumbnail; tapping opens it full screen. "File missing" if it is gone.
 private struct FileHeader: View {
     let relativePath: String
     @Environment(AppModel.self) private var model
+    @Environment(\.displayScale) private var displayScale
     @State private var url: URL?
+    @State private var thumbnail: UIImage?
     @State private var resolved = false
+    @State private var previewURL: URL?
+
+    private static let height: CGFloat = 260
 
     var body: some View {
         Group {
             if let url {
-                FilePreview(url: url)
+                Button {
+                    previewURL = url
+                } label: {
+                    Group {
+                        if let thumbnail {
+                            Image(uiImage: thumbnail)
+                                .resizable()
+                                .scaledToFit()
+                        } else {
+                            Image(systemName: "doc")
+                                .font(.system(size: 64))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding()
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Open \(url.lastPathComponent)"))
             } else if resolved {
                 ContentUnavailableView("File missing", systemImage: "doc")
             } else {
@@ -380,10 +413,35 @@ private struct FileHeader: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(height: 360)
+        .frame(height: Self.height)
+        .quickLookPreview($previewURL)
         .task(id: relativePath) {
             url = await model.attachmentURL(relativePath)
             resolved = true
+            guard let url else { return }
+            let request = QLThumbnailGenerator.Request(
+                fileAt: url, size: CGSize(width: Self.height, height: Self.height), scale: displayScale,
+                representationTypes: .thumbnail)
+            thumbnail = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).uiImage
         }
+    }
+}
+
+/// Shares an item's attachment file, resolved when the button appears.
+private struct AttachmentShareButton: View {
+    let relativePath: String
+    @Environment(AppModel.self) private var model
+    @State private var url: URL?
+
+    var body: some View {
+        Group {
+            if let url {
+                ShareLink(item: url)
+            } else {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+        }
+        .disabled(url == nil)
+        .task(id: relativePath) { url = await model.attachmentURL(relativePath) }
     }
 }
