@@ -11,6 +11,19 @@ struct HomeView: View {
     @State private var newCollectionName = ""
     @State private var searchTag: String?
     @State private var collectionFailed = false
+    @State private var pendingCollectionDelete: CollectionPath?
+    @State private var collectionDeleteFailure: CollectionDeleteFailure?
+
+    private enum CollectionDeleteFailure {
+        case notEmpty, other
+
+        var title: Text {
+            switch self {
+            case .notEmpty: Text("Collection isn’t empty")
+            case .other: Text("Couldn’t delete the collection")
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -32,6 +45,9 @@ struct HomeView: View {
             .navigationTitle("Sharesheet")
             .navigationDestination(for: LibraryScope.self) { scope in
                 ItemListView(query: LibraryQuery(scope: scope))
+            }
+            .navigationDestination(for: ItemID.self) { id in
+                ItemDetailView(id: id)
             }
             .searchable(text: $searchText, prompt: Text("Search"))
             .onChange(of: searchText) { _, text in
@@ -61,6 +77,25 @@ struct HomeView: View {
             .alert("Couldn’t create the collection", isPresented: $collectionFailed) {
                 Button("OK") {}
             }
+            .confirmationDialog(
+                "Delete this collection?", isPresented: isPresented($pendingCollectionDelete),
+                titleVisibility: .visible, presenting: pendingCollectionDelete
+            ) { path in
+                if (model.counts.byCollection[path] ?? 0) == 0 {
+                    Button("Delete", role: .destructive) { deleteCollection(path, moveItemsToUnsorted: false) }
+                } else {
+                    Button("Move items to Unsorted and delete", role: .destructive) {
+                        deleteCollection(path, moveItemsToUnsorted: true)
+                    }
+                }
+            } message: { path in
+                Text(verbatim: path.components.joined(separator: " / "))
+            }
+            .alert(
+                collectionDeleteFailure?.title ?? Text(verbatim: ""), isPresented: isPresented($collectionDeleteFailure)
+            ) {
+                Button("OK") {}
+            }
         }
     }
 
@@ -72,7 +107,9 @@ struct HomeView: View {
         }
         Section {
             ForEach(children(of: .root), id: \.self) { path in
-                CollectionNode(path: path, children: children(of:), count: { model.counts.byCollection[$0] ?? 0 })
+                CollectionNode(
+                    path: path, children: children(of:), count: { model.counts.byCollection[$0] ?? 0 },
+                    onDelete: { pendingCollectionDelete = $0 })
             }
         } header: {
             HStack {
@@ -113,6 +150,22 @@ struct HomeView: View {
         model.collections.filter { $0.parent == parent && $0 != .unsorted }
     }
 
+    private func deleteCollection(_ path: CollectionPath, moveItemsToUnsorted: Bool) {
+        Task {
+            do {
+                try await model.deleteCollection(path, moveItemsToUnsorted: moveItemsToUnsorted)
+            } catch StoreError.collectionNotEmpty {
+                collectionDeleteFailure = .notEmpty
+            } catch {
+                collectionDeleteFailure = .other
+            }
+        }
+    }
+
+    private func isPresented<T>(_ value: Binding<T?>) -> Binding<Bool> {
+        Binding(get: { value.wrappedValue != nil }, set: { if !$0 { value.wrappedValue = nil } })
+    }
+
     private func createCollection() {
         let name = newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
@@ -146,11 +199,12 @@ private struct ScopeRow<Icon: View>: View {
     }
 }
 
-/// A collection with its nested collections in a disclosure group.
+/// A collection with its nested collections in a disclosure group; swipe or long-press to delete it.
 private struct CollectionNode: View {
     let path: CollectionPath
     let children: (CollectionPath) -> [CollectionPath]
     let count: (CollectionPath) -> Int
+    let onDelete: (CollectionPath) -> Void
 
     var body: some View {
         let nested = children(path)
@@ -159,7 +213,7 @@ private struct CollectionNode: View {
         } else {
             DisclosureGroup {
                 ForEach(nested, id: \.self) { child in
-                    CollectionNode(path: child, children: children, count: count)
+                    CollectionNode(path: child, children: children, count: count, onDelete: onDelete)
                 }
             } label: {
                 row
@@ -169,5 +223,20 @@ private struct CollectionNode: View {
 
     private var row: some View {
         ScopeRow(scope: .collection(path), count: count(path)) { Image(systemName: "folder") }
+            .swipeActions(edge: .trailing) {
+                Button {
+                    onDelete(path)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                .tint(.red)
+            }
+            .contextMenu {
+                Button(role: .destructive) {
+                    onDelete(path)
+                } label: {
+                    Label("Delete collection", systemImage: "trash")
+                }
+            }
     }
 }

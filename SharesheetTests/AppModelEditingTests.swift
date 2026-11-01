@@ -1,0 +1,137 @@
+import Foundation
+import Testing
+@testable import Sharesheet
+import SharesheetCore
+
+@MainActor
+struct AppModelEditingTests {
+    @Test func editingTagsWritesFileAndIndex() async throws {
+        let env = try ModelEnv()
+        let created = try await env.store.create(ItemDraft(type: .text, title: "Receipt"), in: .unsorted)
+        let model = env.model()
+        await model.refresh()
+
+        var item = try await model.loadItem(created.id)
+        item.tags = ["groceries", "billa"]
+        item.note = "Weekly shop"
+        _ = try await model.save(item)
+
+        let markdown = try String(contentsOf: env.libraryRoot.appending(path: created.id.relativePath), encoding: .utf8)
+        #expect(markdown.contains("groceries"))
+        #expect(markdown.contains("billa"))
+        #expect(markdown.contains("Weekly shop"))
+        #expect(model.items(LibraryQuery(scope: .all, tag: "billa")).map(\.title) == ["Receipt"])
+        #expect(model.tags.contains("groceries"))
+    }
+
+    @Test func saveKeepsChangesMadeMeanwhile() async throws {
+        let env = try ModelEnv()
+        let created = try await env.store.create(
+            ItemDraft(type: .link, url: URL(string: "https://example.com")!, title: "Page", capture: .pending),
+            in: .unsorted)
+        let model = env.model()
+        await model.refresh()
+        var stale = try await model.loadItem(created.id)
+
+        var captured = try await env.store.item(created.id)
+        captured.screenshot = "_attachments/page.png"
+        captured.capture = .done
+        _ = try await env.store.update(captured)
+        stale.tags = ["web"]
+        stale.favorite = true
+        let saved = try await model.save(stale)
+
+        let onDisk = try await env.store.item(created.id)
+        #expect(onDisk.tags == ["web"])
+        #expect(onDisk.favorite)
+        #expect(onDisk.screenshot == "_attachments/page.png")
+        #expect(onDisk.capture == .done)
+        #expect(saved == onDisk)
+    }
+
+    @Test func savingADeletedItemThrowsNotFound() async throws {
+        let env = try ModelEnv()
+        let created = try await env.store.create(ItemDraft(type: .text, title: "Gone"), in: .unsorted)
+        let model = env.model()
+        await model.refresh()
+        var item = try await model.loadItem(created.id)
+        try FileManager.default.removeItem(at: env.libraryRoot.appending(path: created.id.relativePath))
+        item.title = "Renamed"
+
+        await #expect(throws: StoreError.notFound(created.id.relativePath)) { try await model.save(item) }
+    }
+
+    @Test func moveUpdatesCounts() async throws {
+        let env = try ModelEnv()
+        let created = try await env.store.create(ItemDraft(type: .text, title: "Receipt"), in: .unsorted)
+        let model = env.model()
+        await model.refresh()
+        let billa = try await model.createCollection(named: "Billa", in: .root)
+
+        let newID = try await model.move(created.id, to: billa)
+
+        #expect(newID.collection == billa)
+        #expect(model.counts.all == 1)
+        #expect(model.counts.unsorted == 0)
+        #expect(model.counts.byCollection[billa] == 1)
+        #expect(model.items(LibraryQuery(scope: .collection(billa))).map(\.id) == [newID])
+        #expect(FileManager.default.fileExists(atPath: env.libraryRoot.appending(path: newID.relativePath).path))
+    }
+
+    @Test func deleteRemovesFromIndexAndTrashesFile() async throws {
+        let env = try ModelEnv()
+        let created = try await env.store.create(ItemDraft(type: .text, title: "Old"), in: .unsorted)
+        let model = env.model()
+        await model.refresh()
+
+        try await model.delete(created.id)
+
+        #expect(!FileManager.default.fileExists(atPath: env.libraryRoot.appending(path: created.id.relativePath).path))
+        #expect(model.items(LibraryQuery(scope: .all)).isEmpty)
+        #expect(model.counts.all == 0)
+    }
+
+    @Test func deleteCollectionMovingItemsToUnsorted() async throws {
+        let env = try ModelEnv()
+        let model = env.model()
+        await model.refresh()
+        let billa = try await model.createCollection(named: "Billa", in: .root)
+        _ = try await env.store.create(ItemDraft(type: .text, title: "Receipt"), in: billa)
+        await model.refresh()
+
+        await #expect(throws: StoreError.collectionNotEmpty) {
+            try await model.deleteCollection(billa, moveItemsToUnsorted: false)
+        }
+        #expect(model.collections.contains(billa))
+
+        try await model.deleteCollection(billa, moveItemsToUnsorted: true)
+
+        #expect(!model.collections.contains(billa))
+        #expect(model.counts.unsorted == 1)
+        #expect(model.counts.byCollection[billa] == nil)
+        #expect(model.items(LibraryQuery(scope: .unsorted)).map(\.title) == ["Receipt"])
+    }
+
+    @Test func deleteEmptyCollection() async throws {
+        let env = try ModelEnv()
+        let model = env.model()
+        await model.refresh()
+        let empty = try await model.createCollection(named: "Empty", in: .root)
+
+        try await model.deleteCollection(empty, moveItemsToUnsorted: false)
+
+        #expect(!model.collections.contains(empty))
+    }
+
+    @Test func missingAttachmentReturnsNil() async throws {
+        let env = try ModelEnv()
+        let model = env.model()
+        await model.refresh()
+        let source = env.base.appending(path: "shot.png")
+        try Data([1, 2, 3]).write(to: source)
+        let present = try await env.store.addAttachment(from: source, preferredName: "shot.png")
+
+        #expect(await model.attachmentURL("_attachments/missing.png") == nil)
+        #expect(await model.attachmentURL(present) != nil)
+    }
+}

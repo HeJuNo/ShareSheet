@@ -4,7 +4,7 @@ import Testing
 import SharesheetCore
 
 @MainActor
-private struct ModelEnv {
+struct ModelEnv {
     let base: URL
     let libraryRoot: URL
     let inbox: Inbox

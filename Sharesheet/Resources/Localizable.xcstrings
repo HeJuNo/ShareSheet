@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Add a note" : {
+      "extractionState" : "manual"
+    },
     "Add tags" : {
       "extractionState" : "manual"
     },
@@ -8,6 +11,9 @@
       "extractionState" : "manual"
     },
     "All tags" : {
+      "extractionState" : "manual"
+    },
+    "Archive" : {
       "extractionState" : "manual"
     },
     "Article" : {
@@ -25,6 +31,12 @@
     "Cancel" : {
       "extractionState" : "manual"
     },
+    "Capture failed" : {
+      "extractionState" : "manual"
+    },
+    "Capture now" : {
+      "extractionState" : "manual"
+    },
     "Capture pending" : {
       "extractionState" : "manual"
     },
@@ -34,7 +46,13 @@
     "Checking…" : {
       "extractionState" : "manual"
     },
+    "Close" : {
+      "extractionState" : "manual"
+    },
     "Collection" : {
+      "extractionState" : "manual"
+    },
+    "Collection isn’t empty" : {
       "extractionState" : "manual"
     },
     "Collections" : {
@@ -46,13 +64,31 @@
     "Couldn’t create the collection" : {
       "extractionState" : "manual"
     },
+    "Couldn’t delete the collection" : {
+      "extractionState" : "manual"
+    },
     "Couldn’t delete the item" : {
+      "extractionState" : "manual"
+    },
+    "Couldn’t move the item" : {
+      "extractionState" : "manual"
+    },
+    "Couldn’t open the item" : {
+      "extractionState" : "manual"
+    },
+    "Couldn’t save the item" : {
       "extractionState" : "manual"
     },
     "Create" : {
       "extractionState" : "manual"
     },
     "Delete" : {
+      "extractionState" : "manual"
+    },
+    "Delete collection" : {
+      "extractionState" : "manual"
+    },
+    "Delete this collection?" : {
       "extractionState" : "manual"
     },
     "Delete this item?" : {
@@ -70,6 +106,9 @@
     "Favorites" : {
       "extractionState" : "manual"
     },
+    "File missing" : {
+      "extractionState" : "manual"
+    },
     "Filter by tag" : {
       "extractionState" : "manual"
     },
@@ -85,6 +124,9 @@
     "Link" : {
       "extractionState" : "manual"
     },
+    "Move items to Unsorted and delete" : {
+      "extractionState" : "manual"
+    },
     "Name" : {
       "extractionState" : "manual"
     },
@@ -97,10 +139,19 @@
     "No items" : {
       "extractionState" : "manual"
     },
+    "Note" : {
+      "extractionState" : "manual"
+    },
     "OK" : {
       "extractionState" : "manual"
     },
+    "Open in Safari" : {
+      "extractionState" : "manual"
+    },
     "Rebuild index" : {
+      "extractionState" : "manual"
+    },
+    "Retry" : {
       "extractionState" : "manual"
     },
     "Search" : {
@@ -124,6 +175,12 @@
     "Text" : {
       "extractionState" : "manual"
     },
+    "This item no longer exists" : {
+      "extractionState" : "manual"
+    },
+    "Title" : {
+      "extractionState" : "manual"
+    },
     "Top level" : {
       "extractionState" : "manual"
     },
@@ -140,6 +197,9 @@
       "extractionState" : "manual"
     },
     "Video" : {
+      "extractionState" : "manual"
+    },
+    "View archive" : {
       "extractionState" : "manual"
     },
     "iCloud Drive" : {

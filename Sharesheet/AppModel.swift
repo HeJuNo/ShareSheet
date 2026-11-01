@@ -231,14 +231,59 @@ enum AppModelError: Error, Equatable {
     }
 
     func delete(_ item: IndexedItem) async throws {
+        try await delete(item.id)
+    }
+
+    func loadItem(_ id: ItemID) async throws -> Item {
+        try await requireStore().item(id)
+    }
+
+    /// Writes the user-editable fields (title, note, tags, favorite) of `item` onto a fresh read of its
+    /// file, so capture results written meanwhile survive. Throws `StoreError.notFound` when it is gone.
+    func save(_ item: Item) async throws -> Item {
+        let store = try requireStore()
+        let saved: Item
+        do {
+            var fresh = try await store.item(item.id)
+            fresh.title = item.title
+            fresh.note = item.note
+            fresh.tags = item.tags
+            fresh.favorite = item.favorite
+            saved = try await store.update(fresh)
+        } catch {
+            Self.log.error("Saving an item failed: \(error)")
+            throw error
+        }
+        try? index.upsert(saved)
+        reloadFromIndex()
+        return saved
+    }
+
+    /// Returns the item's new id.
+    func move(_ id: ItemID, to collection: CollectionPath) async throws -> ItemID {
+        let store = try requireStore()
+        let moved: Item
+        do {
+            moved = try await store.move(id, to: collection)
+        } catch {
+            Self.log.error("Moving an item failed: \(error)")
+            throw error
+        }
+        try? index.remove(id)
+        try? index.upsert(moved)
+        reloadFromIndex()
+        return moved.id
+    }
+
+    func delete(_ id: ItemID) async throws {
         let store = try requireStore()
         do {
-            try await store.delete(item.id)
+            try await store.delete(id)
         } catch {
             Self.log.error("Deleting an item failed: \(error)")
             throw error
         }
-        try? index.remove(item.id)
+        try? index.remove(id)
         reloadFromIndex()
     }
 
@@ -256,6 +301,41 @@ enum AppModelError: Error, Equatable {
             Self.log.error("Creating a collection failed: \(error)")
             throw error
         }
+    }
+
+    /// Without moving, a collection holding anything throws `StoreError.collectionNotEmpty`.
+    /// Items of nested collections are moved too. `Unsorted` cannot be deleted.
+    func deleteCollection(_ path: CollectionPath, moveItemsToUnsorted: Bool) async throws {
+        let store = try requireStore()
+        var failure: (any Error)?
+        do {
+            try await store.deleteCollection(path, moveItemsTo: moveItemsToUnsorted ? .unsorted : nil)
+        } catch {
+            Self.log.error("Deleting a collection failed: \(error)")
+            failure = error
+        }
+        // Items may have moved even when the delete failed part way: their ids changed.
+        if moveItemsToUnsorted {
+            do {
+                try index.replaceAll(with: try await store.listItems())
+            } catch {
+                Self.log.error("Re-indexing after a collection delete failed: \(error)")
+            }
+        }
+        collections = (try? await store.collections()) ?? collections
+        reloadFromIndex()
+        if let failure { throw failure }
+    }
+
+    /// Captures the item now (Retry or Capture now), whatever its capture state.
+    func retryCapture(_ id: ItemID) async {
+        await runner?.capture(id)
+        reloadFromIndex()
+    }
+
+    /// nil when the store is unavailable or the file is missing.
+    func attachmentURL(_ relativePath: String) async -> URL? {
+        try? await requireStore().attachmentURL(relativePath)
     }
 
     private func requireStore() throws -> any ItemStore {

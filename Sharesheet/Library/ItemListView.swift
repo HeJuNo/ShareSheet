@@ -96,10 +96,7 @@ struct ItemResults: View {
         let items = model.items(query)
         List {
             ForEach(items) { item in
-                NavigationLink {
-                    // Replaced by the item screen.
-                    Text(verbatim: item.title)
-                } label: {
+                NavigationLink(value: item.id) {
                     ItemRow(item: item, favicon: model.favicon(for: item))
                 }
                 .swipeActions(edge: .leading) {
