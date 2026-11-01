@@ -181,6 +181,16 @@ enum AppModelError: Error, Equatable {
         startCaptures()
     }
 
+    /// Cancels running captures and waits until they stopped; interrupted items stay pending for the background
+    /// task. Called when the app leaves the foreground: a capture frozen at suspension would keep its attempt
+    /// marker, and if the system then evicted the app the next launch would mark that item failed.
+    func stopCaptures() async {
+        guard let task = captureTask else { return }
+        captureRequested = false
+        task.cancel()
+        await task.value
+    }
+
     /// Makes every failed capture pending again, then runs the pending captures.
     func retryFailedCaptures() async {
         guard let store else { return }

@@ -37,6 +37,7 @@ struct SharesheetApp: App {
                 wasInBackground = true
                 // Always: the background run imports shares made meanwhile before capturing.
                 BackgroundCapture.schedule()
+                Task { await model.stopCaptures() }
                 LibraryIndex.suspend()
             default:
                 break
