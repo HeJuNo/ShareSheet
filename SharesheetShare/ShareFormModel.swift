@@ -97,7 +97,7 @@ final class ShareFormModel {
     private nonisolated static func indexedItemID(for url: URL?) async -> ItemID? {
         guard let url, let path = AppGroup.indexURL() else { return nil }
         return await bounded(lookupTimeout) {
-            try? LibraryIndex(path: path, readOnly: true).itemID(forURL: url)
+            try? LibraryIndex(path: path, readOnly: true, observesSuspension: true).itemID(forURL: url)
         } ?? nil
     }
 
@@ -113,7 +113,7 @@ final class ShareFormModel {
 
     private nonisolated static func loadTags() async -> [String] {
         guard let path = AppGroup.indexURL() else { return [] }
-        return (try? LibraryIndex(path: path, readOnly: true).allTags()) ?? []
+        return (try? LibraryIndex(path: path, readOnly: true, observesSuspension: true).allTags()) ?? []
     }
 
     private func startPreview() {

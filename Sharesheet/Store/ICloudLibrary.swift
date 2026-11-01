@@ -4,16 +4,35 @@ import SharesheetCore
 /// Resolves the iCloud library root once and caches the folder store on it. Placeholders met while
 /// scanning are asked to download.
 actor ICloudLibrary {
+    private let locate: @Sendable () async -> URL?
     private var store: FolderItemStore?
+    /// Shared by callers arriving while the root is being located, so they all get the same store.
+    private var resolving: Task<FolderItemStore?, Never>?
 
+    init(locate: @escaping @Sendable () async -> URL? = { await ICloudLocator.libraryRoot() }) {
+        self.locate = locate
+    }
+
+    /// Without a library the next call asks again.
     func resolve() async -> (any ItemStore)? {
         if let store { return store }
-        guard let root = await ICloudLocator.libraryRoot() else { return nil }
-        let resolved = FolderItemStore(root: root) { url in
-            try? FileManager.default.startDownloadingUbiquitousItem(at: url)
+        let task: Task<FolderItemStore?, Never>
+        if let resolving {
+            task = resolving
+        } else {
+            let locate = locate
+            task = Task {
+                guard let root = await locate() else { return nil }
+                return FolderItemStore(root: root) { url in
+                    try? FileManager.default.startDownloadingUbiquitousItem(at: url)
+                }
+            }
+            resolving = task
         }
-        store = resolved
-        return resolved
+        let resolved = await task.value
+        if resolving == task { resolving = nil }
+        if let resolved, store == nil { store = resolved }
+        return store
     }
 }
 

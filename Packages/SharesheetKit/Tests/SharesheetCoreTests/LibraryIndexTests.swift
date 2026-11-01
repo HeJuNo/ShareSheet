@@ -165,3 +165,14 @@ import Testing
         #expect(item.tags.isEmpty && !item.favorite && item.url == nil)
     }
 }
+
+@Test func anObservingIndexRefusesWritesWhileSuspended() throws {
+    let index = try LibraryIndex(path: tempDB(), observesSuspension: true)
+    let bystander = try LibraryIndex(path: tempDB())
+    LibraryIndex.suspend()
+    #expect(throws: (any Error).self) { try index.upsert(.fixture()) }
+    try bystander.upsert(.fixture())
+    LibraryIndex.resume()
+    try index.upsert(.fixture())
+    #expect(try index.search(LibraryQuery(scope: .all)).count == 1)
+}

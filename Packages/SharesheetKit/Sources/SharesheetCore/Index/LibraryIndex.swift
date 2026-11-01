@@ -65,11 +65,24 @@ public struct LibraryCounts: Equatable, Sendable {
 public final class LibraryIndex: Sendable {
     private let pool: DatabasePool
 
-    public init(path: URL, readOnly: Bool = false) throws {
+    /// `observesSuspension`: the database lives in the shared App Group container, so a process holding it open
+    /// while suspended is killed by the system (0xdead10cc). Such an index follows `suspend()` / `resume()`.
+    public init(path: URL, readOnly: Bool = false, observesSuspension: Bool = false) throws {
         var config = Configuration()
         config.readonly = readOnly
+        config.observesSuspensionNotifications = observesSuspension
         pool = try DatabasePool(path: path.path, configuration: config)
         if !readOnly { try Self.migrator.migrate(pool) }
+    }
+
+    /// Makes every observing index give up its locks and refuse access until `resume()`; call it before the
+    /// process is suspended (going to the background, the end of a background task).
+    public static func suspend() {
+        NotificationCenter.default.post(name: Database.suspendNotification, object: nil)
+    }
+
+    public static func resume() {
+        NotificationCenter.default.post(name: Database.resumeNotification, object: nil)
     }
 
     private static var migrator: DatabaseMigrator {

@@ -1,4 +1,6 @@
+import SharesheetCore
 import SwiftUI
+import UIKit
 
 @main
 struct SharesheetApp: App {
@@ -9,9 +11,12 @@ struct SharesheetApp: App {
 
     init() {
         BackgroundCapture.register {
+            LibraryIndex.resume()
             let model = await AppModel.shared
             await model.refreshAndCapture()
             if await model.pendingCaptureCount > 0 { BackgroundCapture.schedule() }
+            // The app may have come to the foreground meanwhile; then the scene keeps the index running.
+            if await UIApplication.shared.applicationState != .active { LibraryIndex.suspend() }
         }
     }
 
@@ -23,12 +28,16 @@ struct SharesheetApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .active where wasInBackground:
+            case .active:
+                LibraryIndex.resume()
+                guard wasInBackground else { break }
                 wasInBackground = false
                 Task { await model.refresh() }
             case .background:
                 wasInBackground = true
-                if model.pendingCaptureCount > 0 { BackgroundCapture.schedule() }
+                // Always: the background run imports shares made meanwhile before capturing.
+                BackgroundCapture.schedule()
+                LibraryIndex.suspend()
             default:
                 break
             }

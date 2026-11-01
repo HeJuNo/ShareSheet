@@ -416,7 +416,7 @@ extension AppModel {
         let fallbacks = [fm.urls(for: .cachesDirectory, in: .userDomainMask).first, fm.temporaryDirectory]
             .compactMap { $0?.appending(path: "index.sqlite") }
         for url in [AppGroup.indexURL()].compactMap({ $0 }) + fallbacks {
-            if let index = try? LibraryIndex(path: url) { return index }
+            if let index = try? LibraryIndex(path: url, observesSuspension: true) { return index }
         }
         fatalError("No writable location for the library index")
     }
