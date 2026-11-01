@@ -142,7 +142,9 @@ struct UnavailableStore: ItemStore {
     func listItems() async throws -> [Item] { try await base.listItems() }
     func item(_ id: ItemID) async throws -> Item { try await base.item(id) }
     func findItem(url: URL) async throws -> Item? { try await base.findItem(url: url) }
-    func create(_ draft: ItemDraft, in collection: CollectionPath) async throws -> Item {
+    func create(
+        _ draft: ItemDraft, in collection: CollectionPath, willWrite: @Sendable (ItemID) throws -> Void
+    ) async throws -> Item {
         throw StoreError.unavailable
     }
     func update(_ item: Item) async throws -> Item { try await base.update(item) }
@@ -183,10 +185,12 @@ final class FlakyStore: ItemStore, @unchecked Sendable {
     func listItems() async throws -> [Item] { try await base.listItems() }
     func item(_ id: ItemID) async throws -> Item { try await base.item(id) }
     func findItem(url: URL) async throws -> Item? { try await base.findItem(url: url) }
-    func create(_ draft: ItemDraft, in collection: CollectionPath) async throws -> Item {
+    func create(
+        _ draft: ItemDraft, in collection: CollectionPath, willWrite: @Sendable (ItemID) throws -> Void
+    ) async throws -> Item {
         let call = lock.withLock { () -> Int in calls += 1; return calls }
         if call == failingCall { throw StoreError.unavailable }
-        return try await base.create(draft, in: collection)
+        return try await base.create(draft, in: collection, willWrite: willWrite)
     }
     func update(_ item: Item) async throws -> Item {
         if updateFails { throw StoreError.notFound(item.id.relativePath) }
@@ -218,4 +222,47 @@ final class FlakyStore: ItemStore, @unchecked Sendable {
 
 func tempDB() -> URL {
     FileManager.default.temporaryDirectory.appending(path: "index-\(UUID().uuidString).sqlite")
+}
+
+/// Wraps a real store; after every `item(_:)` and `findItem(url:)` read, `afterRead` runs on the item read,
+/// e.g. to write a concurrent change between a caller's read and its write.
+struct AfterReadStore: ItemStore {
+    let base: any ItemStore
+    let afterRead: @Sendable (ItemID) async throws -> Void
+    func listItems() async throws -> [Item] { try await base.listItems() }
+    func item(_ id: ItemID) async throws -> Item {
+        let item = try await base.item(id)
+        try await afterRead(id)
+        return item
+    }
+    func findItem(url: URL) async throws -> Item? {
+        let item = try await base.findItem(url: url)
+        if let item { try await afterRead(item.id) }
+        return item
+    }
+    func create(
+        _ draft: ItemDraft, in collection: CollectionPath, willWrite: @Sendable (ItemID) throws -> Void
+    ) async throws -> Item {
+        try await base.create(draft, in: collection, willWrite: willWrite)
+    }
+    func update(_ item: Item) async throws -> Item { try await base.update(item) }
+    func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) async throws -> Item {
+        try await base.modify(id, transform)
+    }
+    func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item {
+        try await base.move(id, to: collection)
+    }
+    func delete(_ id: ItemID) async throws { try await base.delete(id) }
+    func addAttachment(from source: URL, preferredName: String) async throws -> String {
+        try await base.addAttachment(from: source, preferredName: preferredName)
+    }
+    func attachmentURL(_ relativePath: String) async throws -> URL { try await base.attachmentURL(relativePath) }
+    func collections() async throws -> [CollectionPath] { try await base.collections() }
+    func createCollection(named name: String, in parent: CollectionPath) async throws -> CollectionPath {
+        try await base.createCollection(named: name, in: parent)
+    }
+    func deleteCollection(_ path: CollectionPath, moveItemsTo destination: CollectionPath?) async throws {
+        try await base.deleteCollection(path, moveItemsTo: destination)
+    }
+    func changes() -> AsyncStream<Void> { base.changes() }
 }

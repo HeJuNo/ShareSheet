@@ -5,7 +5,10 @@ public protocol ItemStore: Sendable {
     func item(_ id: ItemID) async throws -> Item
     /// Compares `URLCleaner.clean` on both sides.
     func findItem(url: URL) async throws -> Item?
-    func create(_ draft: ItemDraft, in collection: CollectionPath) async throws -> Item
+    /// `willWrite` runs with the chosen id right before the file is written; when it throws, nothing is written.
+    func create(
+        _ draft: ItemDraft, in collection: CollectionPath, willWrite: @Sendable (ItemID) throws -> Void
+    ) async throws -> Item
     func update(_ item: Item) async throws -> Item
     /// Reads the item, applies `transform` and writes the result, as one step no other mutation of this store
     /// interleaves with. Writes nothing when `transform` changed nothing; throws `.notFound` when it is gone.
@@ -20,6 +23,12 @@ public protocol ItemStore: Sendable {
     func createCollection(named name: String, in parent: CollectionPath) async throws -> CollectionPath
     func deleteCollection(_ path: CollectionPath, moveItemsTo destination: CollectionPath?) async throws
     func changes() -> AsyncStream<Void>
+}
+
+extension ItemStore {
+    public func create(_ draft: ItemDraft, in collection: CollectionPath) async throws -> Item {
+        try await create(draft, in: collection, willWrite: { _ in })
+    }
 }
 
 public enum StoreError: Error, Equatable {

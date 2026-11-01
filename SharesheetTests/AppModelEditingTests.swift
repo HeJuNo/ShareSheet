@@ -183,8 +183,10 @@ private struct CaptureAfterReadStore: ItemStore {
         return item
     }
     func findItem(url: URL) async throws -> Item? { try await base.findItem(url: url) }
-    func create(_ draft: ItemDraft, in collection: CollectionPath) async throws -> Item {
-        try await base.create(draft, in: collection)
+    func create(
+        _ draft: ItemDraft, in collection: CollectionPath, willWrite: @Sendable (ItemID) throws -> Void
+    ) async throws -> Item {
+        try await base.create(draft, in: collection, willWrite: willWrite)
     }
     func update(_ item: Item) async throws -> Item { try await base.update(item) }
     func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) async throws -> Item {

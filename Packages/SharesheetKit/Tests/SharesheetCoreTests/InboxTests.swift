@@ -164,12 +164,12 @@ private func importer(_ inbox: Inbox, _ store: any ItemStore) -> InboxImporter {
 }
 
 @Test func failedInboxRemovalDoesNotReimport() async throws {
-    let (inbox, root) = try makeInbox()
+    let (inbox, _) = try makeInbox()
     let (store, _) = try makeStore()
     try inbox.enqueue(.fixture(), files: [:])
-    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
-    let first = await importer(inbox, store).importAll()
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+    struct RemovalFailed: Error {}
+    let failingRemoval = InboxImporter(inbox: inbox, store: store, now: { Date() }, remove: { _ in throw RemovalFailed() })
+    let first = await failingRemoval.importAll()
     #expect(first.imported.count == 1 && first.cleanupFailed == 1)
     let second = await importer(inbox, store).importAll()
     #expect(second.imported.isEmpty && second.cleanupFailed == 0)

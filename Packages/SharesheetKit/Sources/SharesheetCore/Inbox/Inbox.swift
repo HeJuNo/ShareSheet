@@ -31,14 +31,15 @@ public struct Inbox: Sendable {
             to: directory.appending(path: Self.requestFileName), options: .atomic)
     }
 
-    /// Oldest first; directories without a readable `request.json` are skipped.
-    public func pending() throws -> [(request: ShareRequest, directory: URL)] {
-        try scan().requests
+    /// Oldest first; directories without a readable `request.json` are skipped, and so are requests another
+    /// process claimed less than `claimTimeout` ago.
+    public func pending(now: Date = Date()) throws -> [(request: ShareRequest, directory: URL)] {
+        try scan(now: now).requests
     }
 
     /// Like `pending()`, and counts directories whose `request.json` exists but cannot be decoded.
     /// Directories without `request.json` are still being written and are not counted.
-    func scan() throws -> (requests: [(request: ShareRequest, directory: URL)], unreadable: Int) {
+    func scan(now: Date = Date()) throws -> (requests: [(request: ShareRequest, directory: URL)], unreadable: Int) {
         let fm = FileManager.default
         guard fm.fileExists(atPath: root.path) else { return ([], 0) }
         let decoder = JSONDecoder()
@@ -48,6 +49,9 @@ public struct Inbox: Sendable {
         var result: [(request: ShareRequest, directory: URL)] = []
         var unreadable = 0
         for directory in directories {
+            if let claimed = Self.claimDate(of: directory), now.timeIntervalSince(claimed) < Self.claimTimeout {
+                continue
+            }
             let file = directory.appending(path: Self.requestFileName)
             guard fm.fileExists(atPath: file.path) else { continue }
             guard let data = try? Data(contentsOf: file),
@@ -62,11 +66,55 @@ public struct Inbox: Sendable {
         return (sorted, unreadable)
     }
 
-    public func remove(_ id: UUID) throws {
-        let directory = root.appending(path: id.uuidString, directoryHint: .isDirectory)
+    // MARK: Claiming
+
+    /// A claim older than this is taken to belong to a process that died; another importer may take it over.
+    static let claimTimeout: TimeInterval = 600
+    private static let claimMarker = ".claimed-"
+
+    /// Renames `<id>` (or a stale claim of it) to `<id>.claimed-<seconds>-<uuid>`. The rename is atomic, so of
+    /// several processes claiming the same directory exactly one succeeds; the others get nil.
+    func claim(_ directory: URL, now: Date) -> URL? {
+        let base = Self.unclaimedName(directory.lastPathComponent)
+        let seconds = Int(now.timeIntervalSince1970.rounded(.down))
+        let claimed = root.appending(
+            path: "\(base)\(Self.claimMarker)\(seconds)-\(UUID().uuidString)", directoryHint: .isDirectory)
+        do {
+            try FileManager.default.moveItem(at: directory, to: claimed)
+            return claimed
+        } catch {
+            return nil
+        }
+    }
+
+    /// Gives a claimed directory back under its original name, so the next import retries it.
+    func release(_ claimed: URL) {
+        let original = root.appending(path: Self.unclaimedName(claimed.lastPathComponent), directoryHint: .isDirectory)
+        try? FileManager.default.moveItem(at: claimed, to: original)
+    }
+
+    func removeDirectory(_ directory: URL) throws {
         if FileManager.default.fileExists(atPath: directory.path) {
             try FileManager.default.removeItem(at: directory)
         }
+    }
+
+    private static func unclaimedName(_ name: String) -> String {
+        guard let range = name.range(of: claimMarker) else { return name }
+        return String(name[..<range.lowerBound])
+    }
+
+    private static func claimDate(of directory: URL) -> Date? {
+        let name = directory.lastPathComponent
+        guard let range = name.range(of: claimMarker) else { return nil }
+        let seconds = name[range.upperBound...].prefix { $0.isNumber }
+        // An unparseable claim counts as stale.
+        guard let value = TimeInterval(seconds) else { return .distantPast }
+        return Date(timeIntervalSince1970: value)
+    }
+
+    public func remove(_ id: UUID) throws {
+        try removeDirectory(root.appending(path: id.uuidString, directoryHint: .isDirectory))
     }
 }
 

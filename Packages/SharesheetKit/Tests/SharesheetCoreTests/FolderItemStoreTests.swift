@@ -328,3 +328,27 @@ private func mkdir(_ root: URL, _ path: String) throws {
     let modified = try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date
     #expect(modified == old)
 }
+
+@Test func deleteNeverTrashesTheAttachmentsFolderOrADirectory() async throws {
+    let trash = RecordingTrash()
+    let (store, root) = try makeStore(trash: trash)
+    let kept = try await store.addAttachment(from: try tempFile(named: "k.png", bytes: 3), preferredName: "k.png")
+    try mkdir(root, "_attachments/sub")
+    var item = try await store.create(.fixture(title: "A"), in: .unsorted)
+    item.image = "_attachments/"
+    item.screenshot = "_attachments/sub"
+    item.archive = "_attachments//"
+    item = try await store.update(item)
+    try await store.delete(item.id)
+    #expect(trash.trashed.map(\.lastPathComponent) == ["A.md"])
+    #expect(exists(root, kept) && exists(root, "_attachments/sub"))
+}
+
+@Test func attachmentURLRejectsDirectories() async throws {
+    let (store, root) = try makeStore()
+    _ = try await store.addAttachment(from: try tempFile(named: "k.png", bytes: 3), preferredName: "k.png")
+    try mkdir(root, "_attachments/sub")
+    for path in ["_attachments/", "_attachments", "_attachments/sub"] {
+        await #expect(throws: StoreError.self) { _ = try await store.attachmentURL(path) }
+    }
+}

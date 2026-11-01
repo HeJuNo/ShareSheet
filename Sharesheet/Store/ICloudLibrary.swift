@@ -30,8 +30,10 @@ struct ResolvingItemStore: ItemStore {
     func listItems() async throws -> [Item] { try await store().listItems() }
     func item(_ id: ItemID) async throws -> Item { try await store().item(id) }
     func findItem(url: URL) async throws -> Item? { try await store().findItem(url: url) }
-    func create(_ draft: ItemDraft, in collection: CollectionPath) async throws -> Item {
-        try await store().create(draft, in: collection)
+    func create(
+        _ draft: ItemDraft, in collection: CollectionPath, willWrite: @Sendable (ItemID) throws -> Void
+    ) async throws -> Item {
+        try await store().create(draft, in: collection, willWrite: willWrite)
     }
     func update(_ item: Item) async throws -> Item { try await store().update(item) }
     func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) async throws -> Item {

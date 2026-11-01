@@ -197,7 +197,7 @@ final class ShareFormModel {
                 nil
             }
             guard let target else { return false }
-            _ = await InboxImporter(inbox: Inbox(root: inboxRoot), store: target).importAll()
+            _ = await InboxImporter(inbox: Inbox(root: inboxRoot), store: target).importRequest(request.id)
             return true
         }
         context?.completeRequest(returningItems: nil)

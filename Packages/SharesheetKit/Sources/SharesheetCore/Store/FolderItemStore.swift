@@ -23,8 +23,10 @@ public final class FolderItemStore: ItemStore {
     public func listItems() async throws -> [Item] { try await worker.listItems() }
     public func item(_ id: ItemID) async throws -> Item { try await worker.item(id) }
     public func findItem(url: URL) async throws -> Item? { try await worker.findItem(url: url) }
-    public func create(_ draft: ItemDraft, in collection: CollectionPath) async throws -> Item {
-        try await worker.create(draft, in: collection)
+    public func create(
+        _ draft: ItemDraft, in collection: CollectionPath, willWrite: @Sendable (ItemID) throws -> Void
+    ) async throws -> Item {
+        try await worker.create(draft, in: collection, willWrite: willWrite)
     }
     public func update(_ item: Item) async throws -> Item { try await worker.update(item) }
     public func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) async throws -> Item {
@@ -107,8 +109,7 @@ private actor Worker {
     }
 
     func attachmentURL(_ relativePath: String) throws -> URL {
-        let url = try fileURL(relativePath)
-        guard fm.fileExists(atPath: url.path) else { throw StoreError.notFound(relativePath) }
+        guard let url = regularFileURL(relativePath) else { throw StoreError.notFound(relativePath) }
         return url
     }
 
@@ -127,7 +128,9 @@ private actor Worker {
 
     // MARK: Writing items
 
-    func create(_ draft: ItemDraft, in collection: CollectionPath) throws -> Item {
+    func create(
+        _ draft: ItemDraft, in collection: CollectionPath, willWrite announce: @Sendable (ItemID) throws -> Void
+    ) throws -> Item {
         try ensureDirectory(collection)
         let created = Self.wholeSeconds(draft.created)
         var file: String?
@@ -152,7 +155,8 @@ private actor Worker {
             item.id = ItemID(relativePath: (collection.components + [name]).joined(separator: "/"))
             let url = try fileURL(item.id.relativePath)
             willWrite?(url)
-            if try writeNew(item, to: url) { return item }
+            let id = item.id
+            if try writeNew(item, to: url, willWrite: { try announce(id) }) { return item }
         }
         throw StoreError.unavailable
     }
@@ -167,16 +171,23 @@ private actor Worker {
         return item
     }
 
-    /// Synchronous inside the actor, so read, transform and write cannot interleave with another mutation.
+    /// Read, transform and write happen inside one coordinated write, so neither another mutation of this store
+    /// nor another process (the share extension) can write the file in between.
     func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) throws -> Item {
-        let original = try read(id)
-        var item = original
-        try transform(&item)
-        item.id = original.id
-        item.created = Self.wholeSeconds(item.created)
-        guard item != original else { return original }
-        try write(item)
-        return item
+        let url = try fileURL(id.relativePath)
+        guard fm.fileExists(atPath: url.path) else { throw StoreError.notFound(id.relativePath) }
+        return try coordinated(writing: url, options: .forMerging) { target in
+            // Read directly: a second coordinator on the same file inside this block could deadlock.
+            guard fm.fileExists(atPath: target.path) else { throw StoreError.notFound(id.relativePath) }
+            let original = try ItemCodec.decode(try String(contentsOf: target, encoding: .utf8), id: id)
+            var item = original
+            try transform(&item)
+            item.id = original.id
+            item.created = Self.wholeSeconds(item.created)
+            guard item != original else { return original }
+            try Data(ItemCodec.encode(item).utf8).write(to: target, options: .atomic)
+            return item
+        }
     }
 
     func move(_ id: ItemID, to collection: CollectionPath) throws -> Item {
@@ -210,7 +221,7 @@ private actor Worker {
         // Unreadable or not-yet-downloaded items may still reference an attachment: keep it then.
         guard scanIsComplete else { return }
         for path in Set(attachments) where !inUse.contains(path) {
-            guard let url = try? fileURL(path), fm.fileExists(atPath: url.path) else { continue }
+            guard let url = regularFileURL(path) else { continue }
             try trashFile(url)
         }
     }
@@ -331,6 +342,17 @@ private actor Worker {
         return parts.filter { !$0.isEmpty }.reduce(root) { $0.appending(path: $1) }
     }
 
+    /// The URL of an existing regular file; nil for a path with an empty last component (`_attachments/`),
+    /// a directory, or a missing file.
+    private func regularFileURL(_ relativePath: String) -> URL? {
+        guard let last = relativePath.split(separator: "/", omittingEmptySubsequences: false).last, !last.isEmpty,
+            let url = try? fileURL(relativePath)
+        else { return nil }
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else { return nil }
+        return url
+    }
+
     private func directoryURL(_ path: CollectionPath) throws -> URL {
         try fileURL(path.relativePath)
     }
@@ -355,10 +377,11 @@ private actor Worker {
     }
 
     /// Writes a new file; returns false (writing nothing) when the file already exists.
-    private func writeNew(_ item: Item, to url: URL) throws -> Bool {
+    private func writeNew(_ item: Item, to url: URL, willWrite: () throws -> Void) throws -> Bool {
         let data = Data(ItemCodec.encode(item).utf8)
         return try coordinated(writing: url, options: []) { target in
             guard !fm.fileExists(atPath: target.path) else { return false }
+            try willWrite()
             try data.write(to: target, options: .atomic)
             return true
         }
