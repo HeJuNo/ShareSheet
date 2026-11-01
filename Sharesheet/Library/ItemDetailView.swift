@@ -61,6 +61,9 @@ struct ItemDetailView: View {
     @State private var isCapturing = false
     @State private var confirmsDelete = false
     @State private var failure: Failure?
+    /// The attachment open in Quick Look. Kept here rather than in the list row: presenting full screen
+    /// takes the list out of the window, the row is rebuilt and would lose the state, closing the preview.
+    @State private var previewURL: URL?
 
     init(id: ItemID) {
         _id = State(initialValue: id)
@@ -99,6 +102,7 @@ struct ItemDetailView: View {
             guard destination != id.collection else { return }
             Task { await move(to: destination) }
         }
+        .quickLookPreview($previewURL)
         .onDisappear { flush(committingPendingTag: true) }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { flush(committingPendingTag: false) }
@@ -184,7 +188,7 @@ struct ItemDetailView: View {
     /// The screenshot for web items, the file itself for files, the shared text for text items.
     @ViewBuilder private func header(_ item: Item) -> some View {
         if let file = item.file {
-            FileHeader(relativePath: file)
+            FileHeader(relativePath: file) { previewURL = $0 }
         } else if let screenshot = item.screenshot {
             ScreenshotThumbnail(relativePath: screenshot)
         } else if item.url != nil {
@@ -374,12 +378,12 @@ struct ItemDetailView: View {
 /// A file item's attachment as a Quick Look thumbnail; tapping opens it full screen. "File missing" if it is gone.
 private struct FileHeader: View {
     let relativePath: String
+    let open: (URL) -> Void
     @Environment(AppModel.self) private var model
     @Environment(\.displayScale) private var displayScale
     @State private var url: URL?
     @State private var thumbnail: UIImage?
     @State private var resolved = false
-    @State private var previewURL: URL?
 
     private static let height: CGFloat = 260
 
@@ -387,7 +391,7 @@ private struct FileHeader: View {
         Group {
             if let url {
                 Button {
-                    previewURL = url
+                    open(url)
                 } label: {
                     Group {
                         if let thumbnail {
@@ -414,7 +418,6 @@ private struct FileHeader: View {
             }
         }
         .frame(height: Self.height)
-        .quickLookPreview($previewURL)
         .task(id: relativePath) {
             url = await model.attachmentURL(relativePath)
             resolved = true
