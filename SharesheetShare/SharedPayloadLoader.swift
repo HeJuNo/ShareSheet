@@ -41,8 +41,10 @@ struct SharedPayloadLoader {
                 }
             }
         }
+        // The unreadable attachments were this same post, so nothing is missing.
         if inputs.isEmpty, let url = Self.firstWebURL(in: items) {
             inputs.append(.url(url, pageTitle: nil, selection: nil))
+            failed = 0
         }
         return (inputs, failed)
     }
