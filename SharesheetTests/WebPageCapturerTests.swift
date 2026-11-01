@@ -36,6 +36,21 @@ struct WebPageCapturerTests {
         #expect(isClose(bottom, to: [0, 0, 255]), "bottom pixel \(bottom)")
     }
 
+    /// Stretching the web view to the full page height must not stretch `100vh` sections with it.
+    @Test func viewportHeightStaysAtPhoneSizeInFullPageShot() async throws {
+        let capturer = WebPageCapturer()
+
+        let snapshot = try await capturer.capture(try fixture("vh-page"))
+
+        let image = try #require(UIImage(data: snapshot.png)?.cgImage)
+        #expect(image.height == (844 + 2000) * 2)
+        let inHero = pixel(image, x: 390, y: 844 * 2 - 40)
+        let belowHero = pixel(image, x: 390, y: 844 * 2 + 40)
+        #expect(isClose(inHero, to: [255, 0, 0]), "hero pixel \(inHero)")
+        #expect(isClose(belowHero, to: [0, 0, 255]), "below-hero pixel \(belowHero)")
+        #expect(!snapshot.domHTML.contains("sharesheet-hid"))
+    }
+
     /// Colour matching tolerates small differences from colour-space conversion.
     private func isClose(_ rgb: [UInt8], to expected: [UInt8]) -> Bool {
         zip(rgb, expected).allSatisfy { abs(Int($0) - Int($1)) <= 8 }

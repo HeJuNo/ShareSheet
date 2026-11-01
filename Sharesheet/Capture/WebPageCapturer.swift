@@ -29,7 +29,6 @@ final class WebPageCapturer: PageCapturing {
     private let postLoadBudget: Duration
     private let maxHeight: CGFloat
     private let viewportHeight: CGFloat = 844
-    private let tileHeight: CGFloat = 2_000
     /// The window web views are hosted in; created on first capture.
     private(set) var hostWindow: UIWindow?
 
@@ -75,17 +74,13 @@ final class WebPageCapturer: PageCapturing {
     private func render(_ webView: WKWebView, in window: UIWindow, url: URL) async throws -> PageSnapshot {
         let fullHeight = try await scrollThrough(webView)
         let height = min(fullHeight, maxHeight)
-        webView.frame = CGRect(x: 0, y: 0, width: width, height: height)
-        webView.layoutIfNeeded()
-        try await Task.sleep(for: .milliseconds(300))
-
         let screenScale = window.traitCollection.displayScale > 0 ? window.traitCollection.displayScale : UIScreen.main.scale
         let tiles = try await snapshotTiles(webView, height: height, screenScale: screenScale)
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
         format.opaque = true
         let image = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { _ in
-            for (y, tile) in tiles { tile.draw(in: CGRect(x: 0, y: y, width: width, height: min(tileHeight, height - y))) }
+            for (y, tile) in tiles { tile.draw(in: CGRect(x: 0, y: y, width: width, height: tile.size.height * width / tile.size.width)) }
         }
         guard let png = image.pngData() else { throw CaptureError.loadFailed("snapshot could not be encoded") }
         try Task.checkCancellation()
@@ -99,19 +94,50 @@ final class WebPageCapturer: PageCapturing {
             iconURL: icon.flatMap { $0.isEmpty ? nil : URL(string: $0) }, truncated: fullHeight > maxHeight)
     }
 
-    /// Snapshots the page in horizontal strips of at most `tileHeight`, returned with their top offsets.
-    /// One snapshot taller than the GPU's texture limit (about 6,000 pt on a 3x iPhone) comes back blank.
+    /// Snapshots the page one viewport at a time, scrolling between shots, and returns each shot with its top offset.
+    /// The web view keeps its phone-sized frame: stretching it to the page height would stretch `100vh` sections
+    /// with it, and a single snapshot taller than the GPU's texture limit (about 6,000 pt on a 3x iPhone) comes
+    /// back blank. Fixed and sticky elements are hidden after the first shot so headers appear only once.
     private func snapshotTiles(_ webView: WKWebView, height: CGFloat, screenScale: CGFloat) async throws -> [(CGFloat, UIImage)] {
         var tiles: [(CGFloat, UIImage)] = []
-        for y in stride(from: CGFloat(0), to: height, by: tileHeight) {
+        let maxOffset = max(0, height - viewportHeight)
+        var y: CGFloat = 0
+        while y < height {
             try Task.checkCancellation()
+            let offset = min(y, maxOffset)
+            _ = try? await webView.evaluateJavaScript("window.scrollTo(0, \(Int(offset)))")
+            try await Task.sleep(for: .milliseconds(y == 0 ? 50 : 150))
             let config = WKSnapshotConfiguration()
-            config.rect = CGRect(x: 0, y: y, width: width, height: min(tileHeight, height - y))
+            config.rect = CGRect(x: 0, y: 0, width: width, height: min(viewportHeight, height))
             config.snapshotWidth = NSNumber(value: Double(width * scale / screenScale))
-            tiles.append((y, try await webView.takeSnapshot(configuration: config)))
+            tiles.append((offset, try await webView.takeSnapshot(configuration: config)))
+            if y == 0 { _ = try? await webView.evaluateJavaScript(Self.hideFixedElements) }
+            y += viewportHeight
         }
+        _ = try? await webView.evaluateJavaScript(Self.showFixedElements)
         return tiles
     }
+
+    private static let hideFixedElements = """
+        document.querySelectorAll('body *').forEach(function (e) {
+          var p = getComputedStyle(e).position;
+          if (p === 'fixed' || p === 'sticky') { e.setAttribute('data-sharesheet-hidden', ''); }
+        });
+        var s = document.createElement('style');
+        s.id = 'sharesheet-hide-fixed';
+        s.textContent = '[data-sharesheet-hidden] { visibility: hidden !important; }';
+        document.head.appendChild(s);
+        """
+
+    /// Undoes `hideFixedElements`, so the archived DOM is the page as loaded.
+    private static let showFixedElements = """
+        document.querySelectorAll('[data-sharesheet-hidden]').forEach(function (e) {
+          e.removeAttribute('data-sharesheet-hidden');
+        });
+        var s = document.getElementById('sharesheet-hide-fixed');
+        if (s) { s.remove(); }
+        window.scrollTo(0, 0);
+        """
 
     /// Scrolls down one viewport every 150 ms until the document stops growing or reaches `maxHeight`,
     /// then returns to the top. Returns the final scroll height.
