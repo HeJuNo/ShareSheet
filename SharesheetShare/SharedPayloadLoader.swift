@@ -41,7 +41,25 @@ struct SharedPayloadLoader {
                 }
             }
         }
+        if inputs.isEmpty, let url = Self.firstWebURL(in: items) {
+            inputs.append(.url(url, pageTitle: nil, selection: nil))
+        }
         return (inputs, failed)
+    }
+
+    /// Some apps share a post without a usable attachment and put its link only in the item's text.
+    private nonisolated static func firstWebURL(in items: [NSExtensionItem]) -> URL? {
+        let texts = items.flatMap { [$0.attributedContentText?.string, $0.attributedTitle?.string] }.compactMap { $0 }
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
+        for text in texts {
+            let range = NSRange(text.startIndex..., in: text)
+            for match in detector.matches(in: text, range: range) {
+                if let url = match.url, let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) {
+                    return url
+                }
+            }
+        }
+        return nil
     }
 
     /// Inputs typed or picked in the app: a link or text, and files, each copied like a shared attachment.

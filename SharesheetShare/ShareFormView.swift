@@ -21,7 +21,15 @@ struct ShareFormView: View {
         case .loading:
             ProgressView()
         case .empty:
-            ContentUnavailableView("Nothing to save", systemImage: "tray")
+            ContentUnavailableView {
+                Label("Nothing to save", systemImage: "tray")
+            } description: {
+                if !model.receivedTypes.isEmpty {
+                    Text("Received: \(model.receivedTypes.joined(separator: ", "))")
+                        .font(.footnote.monospaced())
+                        .textSelection(.enabled)
+                }
+            }
         case .ready:
             form
         }

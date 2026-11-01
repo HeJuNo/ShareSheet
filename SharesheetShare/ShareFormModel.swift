@@ -26,6 +26,8 @@ final class ShareFormModel {
     private(set) var isSaving = false
     /// Attachments that could not be read; the rest can still be saved.
     private(set) var failedCount = 0
+    /// What the sharing app handed over, shown when none of it could be used, so the gap can be closed.
+    private(set) var receivedTypes: [String] = []
     /// Tag text typed but not yet committed with comma or return.
     var pendingTag = ""
     var errorMessage: LocalizedStringResource?
@@ -66,6 +68,8 @@ final class ShareFormModel {
         } else {
             let items = context?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
             loaded = await payloadLoader.load(items)
+            receivedTypes = items.flatMap { $0.attachments ?? [] }.flatMap(\.registeredTypeIdentifiers)
+            if items.contains(where: { $0.attributedContentText != nil }) { receivedTypes.append("text") }
         }
         failedCount = loaded.failed
         let normalized = ShareRequestBuilder.normalized(loaded.inputs)
