@@ -51,6 +51,24 @@ struct WebPageCapturerTests {
         #expect(!snapshot.domHTML.contains("sharesheet-hid"))
     }
 
+    /// Pages with `scroll-behavior: smooth` animate `scrollTo`, so a shot taken right after it lands mid-scroll.
+    @Test func smoothScrollingPageIsStitchedInPlace() async throws {
+        let capturer = WebPageCapturer()
+
+        let snapshot = try await capturer.capture(try fixture("smooth-page"))
+
+        let image = try #require(UIImage(data: snapshot.png)?.cgImage)
+        #expect(image.height == 3600 * 2)
+        let colours: [[UInt8]] = [[255, 0, 0], [0, 255, 0], [0, 0, 255]]
+        for band in 0..<9 {
+            let expected = colours[band % 3]
+            for y in [band * 400 + 30, band * 400 + 200, band * 400 + 370] {
+                let actual = pixel(image, x: 390, y: y * 2)
+                #expect(isClose(actual, to: expected), "pixel at \(y) pt is \(actual), expected \(expected)")
+            }
+        }
+    }
+
     /// Colour matching tolerates small differences from colour-space conversion.
     private func isClose(_ rgb: [UInt8], to expected: [UInt8]) -> Bool {
         zip(rgb, expected).allSatisfy { abs(Int($0) - Int($1)) <= 8 }

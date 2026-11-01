@@ -102,21 +102,23 @@ final class WebPageCapturer: PageCapturing {
     /// The web view keeps its phone-sized frame: stretching it to the page height would stretch `100vh` sections
     /// with it, and a single snapshot taller than the GPU's texture limit (about 6,000 pt on a 3x iPhone) comes
     /// back blank. Fixed and sticky elements are hidden after the first shot so headers appear only once.
+    /// Each shot is placed at the offset the page actually reached, which can fall short of the target at the bottom.
     private func snapshotTiles(_ webView: WKWebView, height: CGFloat, screenScale: CGFloat) async throws -> [(CGFloat, UIImage)] {
         var tiles: [(CGFloat, UIImage)] = []
         let maxOffset = max(0, height - viewportHeight)
         var y: CGFloat = 0
         while y < height {
             try Task.checkCancellation()
-            let offset = min(y, maxOffset)
-            _ = try? await webView.evaluateJavaScript("window.scrollTo(0, \(Int(offset)))")
+            let offset = try await scroll(webView, to: min(y, maxOffset))
             try await Task.sleep(for: .milliseconds(y == 0 ? 50 : 150))
             let config = WKSnapshotConfiguration()
             config.rect = CGRect(x: 0, y: 0, width: width, height: min(viewportHeight, height))
             config.snapshotWidth = NSNumber(value: Double(width * scale / screenScale))
             tiles.append((offset, try await webView.takeSnapshot(configuration: config)))
             if y == 0 { _ = try? await webView.evaluateJavaScript(Self.hideFixedElements) }
-            y += viewportHeight
+            // A page that stops short of the target (it shrank while loading) has no more content below.
+            guard offset + viewportHeight > y else { break }
+            y = offset + viewportHeight
         }
         _ = try? await webView.evaluateJavaScript(Self.showFixedElements)
         return tiles
@@ -140,8 +142,17 @@ final class WebPageCapturer: PageCapturing {
         });
         var s = document.getElementById('sharesheet-hide-fixed');
         if (s) { s.remove(); }
-        window.scrollTo(0, 0);
+        window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
         """
+
+    /// Scrolls to `offset` without animation, so pages with `scroll-behavior: smooth` are not caught mid-scroll,
+    /// and returns the offset the page actually reached.
+    private func scroll(_ webView: WKWebView, to offset: CGFloat) async throws -> CGFloat {
+        try Task.checkCancellation()
+        let reached = try? await webView.evaluateJavaScript(
+            "window.scrollTo({ top: \(Int(offset)), left: 0, behavior: 'instant' }); window.scrollY")
+        return (reached as? NSNumber).map { CGFloat($0.doubleValue) } ?? offset
+    }
 
     /// Scrolls down one viewport every 150 ms until the document stops growing or reaches `maxHeight`,
     /// then returns to the top. Returns the final scroll height.
@@ -152,14 +163,14 @@ final class WebPageCapturer: PageCapturing {
         for _ in 0..<maxSteps where height < maxHeight {
             try Task.checkCancellation()
             offset += viewportHeight
-            _ = try? await webView.evaluateJavaScript("window.scrollTo(0, \(Int(offset)))")
+            _ = try await scroll(webView, to: offset)
             try await Task.sleep(for: .milliseconds(150))
             let newHeight = try await scrollHeight(webView)
             let grew = newHeight > height
             height = newHeight
             if !grew, offset + viewportHeight >= height { break }
         }
-        _ = try? await webView.evaluateJavaScript("window.scrollTo(0, 0)")
+        _ = try await scroll(webView, to: 0)
         try await Task.sleep(for: .milliseconds(500))
         return max(height, 1)
     }
