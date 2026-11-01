@@ -6,3 +6,11 @@ xcuserdata/
 build/
 .DS_Store
 ._*
+fastlane/report.xml
+fastlane/test_output/
+fastlane/new_certificate_needed.txt
+artifacts/
+buildlog/
+*.ipa
+*.dSYM.zip
+*.mobileprovision

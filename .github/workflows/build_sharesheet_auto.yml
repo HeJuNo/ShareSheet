@@ -1,0 +1,186 @@
+name: 4. Build Sharesheet Auto
+run-name: Build Sharesheet Auto (${{ github.ref_name }})
+on:
+  workflow_dispatch:
+  schedule:
+    # Check for updates every Sunday at UTC 7:33
+    - cron: "33 7 * * 0"
+
+env:
+  GH_PAT: ${{ secrets.GH_PAT }}
+
+jobs:
+  check_status:
+    runs-on: ubuntu-26.04
+    name: Check status to decide whether to build
+    permissions:
+      contents: write
+    outputs:
+      IS_SECOND_IN_MONTH: ${{ steps.date-check.outputs.is_second_instance }}
+
+    steps:
+      - name: Access
+        id: workflow-permission
+        run: |
+          # Validate Access Token
+          set -o pipefail
+
+          GH_PAT_CLASSIC_PATTERN='^ghp_[a-zA-Z0-9]{36}$'
+          GH_PAT_FINE_GRAINED_PATTERN='^github_pat_[a-zA-Z0-9]{22}_[a-zA-Z0-9]{59}$'
+
+          if [ -z "$GH_PAT" ]; then
+            failed=true
+            echo "::error::The GH_PAT secret is unset or empty. Set it and try again."
+          else
+            if [[ $GH_PAT =~ $GH_PAT_CLASSIC_PATTERN ]]; then
+              provides_scopes=true
+              echo "The GH_PAT secret is a structurally valid classic token."
+            elif [[ $GH_PAT =~ $GH_PAT_FINE_GRAINED_PATTERN ]]; then
+              echo "The GH_PAT secret is a structurally valid fine-grained token."
+            else
+              unknown_format=true
+              echo "The GH_PAT secret does not have a known token format."
+            fi
+
+            if ! scopes=$(curl -sS -f -I -H "Authorization: token $GH_PAT" https://api.github.com | { grep -i '^x-oauth-scopes:' || true; } | cut -d ' ' -f2- | tr -d '\r'); then
+              failed=true
+              echo "::error::Unable to connect to GitHub using the GH_PAT secret."
+            elif [[ $scopes =~ workflow ]]; then
+              echo "The GH_PAT secret has repo and workflow permissions."
+              echo "has_permission=true" >> $GITHUB_OUTPUT
+            elif [[ $scopes =~ repo ]]; then
+              echo "The GH_PAT secret has repo (but not workflow) permissions."
+            elif [ $provides_scopes ]; then
+              failed=true
+              echo "::error::The GH_PAT secret is lacking the 'repo' permission scope."
+            else
+              echo "has_permission=true" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+          if [ $failed ]; then
+            exit 2
+          fi
+
+      - name: Check if this is the second time this day-of-week happens this month
+        id: date-check
+        run: |
+          WEEK_OF_MONTH=$(( ($(date +%-d) - 1) / 7 + 1 ))
+          if [[ $WEEK_OF_MONTH -eq 2 ]]; then
+            echo "is_second_instance=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_second_instance=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Show scheduled build configuration message
+        if: steps.workflow-permission.outputs.has_permission != 'true'
+        run: |
+          echo "### :calendar: Scheduled Build Disabled :mobile_phone_off:" >> $GITHUB_STEP_SUMMARY
+          echo "You have not yet configured the scheduled build for Sharesheet." >> $GITHUB_STEP_SUMMARY
+          echo "Please configure the required secrets (GH_PAT, TEAMID, FASTLANE_KEY_ID, FASTLANE_ISSUER_ID, FASTLANE_KEY, MATCH_PASSWORD) in the repository settings." >> $GITHUB_STEP_SUMMARY
+
+  # Cancel run when there is nothing to build (scheduled only)
+  cancel_when_no_build:
+    needs: check_status
+    name: Cancel run when there is nothing to build
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: write
+    if: |
+      github.event_name == 'schedule' &&
+        !(vars.SCHEDULED_BUILD != 'false' && needs.check_status.outputs.IS_SECOND_IN_MONTH == 'true')
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "No monthly build is due — cancelling this run." >> "$GITHUB_STEP_SUMMARY"
+          gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+          sleep 300
+
+  check_certs:
+    needs: [check_status]
+    name: Check certificates
+    uses: ./.github/workflows/create_certs.yml
+    secrets: inherit
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+        (vars.SCHEDULED_BUILD != 'false' && needs.check_status.outputs.IS_SECOND_IN_MONTH == 'true')
+
+  build:
+    name: Build
+    needs: [check_certs, check_status]
+    runs-on: xcode-27
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+        (vars.SCHEDULED_BUILD != 'false' && needs.check_status.outputs.IS_SECOND_IN_MONTH == 'true')
+    steps:
+      - name: Select Xcode version
+        run: "sudo xcode-select --switch /Applications/Xcode_27.0.app/Contents/Developer"
+
+      - name: Checkout Repo for building
+        uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Apply Patches
+        run: |
+          if $(ls ./patches/* &> /dev/null); then
+            git apply ./patches/* --allow-empty -v --whitespace=fix
+          fi
+
+      - name: Patch Match Tables
+        run: |
+          TABLE_PRINTER_PATH=$(ruby -e 'puts Gem::Specification.find_by_name("fastlane").gem_dir')/match/lib/match/table_printer.rb
+          if [ -f "$TABLE_PRINTER_PATH" ]; then
+            sed -i "" "/puts(Terminal::Table.new(params))/d" "$TABLE_PRINTER_PATH"
+          else
+            echo "table_printer.rb not found"
+            exit 1
+          fi
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen &> /dev/null; then
+            brew install xcodegen
+          fi
+
+      - name: Generate Xcode Project
+        run: xcodegen generate
+
+      - name: Install Project Dependencies
+        run: bundle install
+
+      - name: Sync clock
+        run: sudo sntp -sS time.windows.com
+
+      - name: Fastlane Build & Archive
+        run: bundle exec fastlane build_sharesheet
+        env:
+          TEAMID: ${{ secrets.TEAMID }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          FASTLANE_KEY_ID: ${{ secrets.FASTLANE_KEY_ID }}
+          FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
+          FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+
+      - name: Fastlane upload to TestFlight
+        run: bundle exec fastlane release
+        env:
+          TEAMID: ${{ secrets.TEAMID }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          FASTLANE_KEY_ID: ${{ secrets.FASTLANE_KEY_ID }}
+          FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
+          FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+
+      - name: Upload build log, IPA and Symbol artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: build-artifacts
+          path: |
+            artifacts
+            buildlog
