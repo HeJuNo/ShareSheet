@@ -14,22 +14,49 @@ public struct URLSessionFetcher: ResourceFetching {
     private let maxBytes: Int
 
     public init(timeout: TimeInterval = 15, maxBytes: Int = 10_000_000) {
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = timeout
-        config.timeoutIntervalForResource = timeout
-        self.session = URLSession(configuration: config)
+        self.init(configuration: .ephemeral, timeout: timeout, maxBytes: maxBytes)
+    }
+
+    /// Test seam: `configuration` can carry stub protocol classes.
+    init(configuration: URLSessionConfiguration, timeout: TimeInterval, maxBytes: Int) {
+        configuration.timeoutIntervalForRequest = timeout
+        configuration.timeoutIntervalForResource = timeout
+        self.session = URLSession(configuration: configuration)
         self.timeout = timeout
         self.maxBytes = maxBytes
     }
 
+    /// Streams the body and gives up as soon as it passes `maxBytes` (or declares more up front), so a huge or
+    /// endless resource is never held in memory.
     public func fetch(_ url: URL) async throws -> (data: Data, mimeType: String?) {
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
-        let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { throw BadStatus() }
-        if response.expectedContentLength > Int64(maxBytes) || data.count > maxBytes { throw TooLarge() }
-        return (data, response.mimeType)
+        let (bytes, response) = try await session.bytes(for: request)
+        do {
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { throw BadStatus() }
+            let declared = response.expectedContentLength
+            if declared > Int64(maxBytes) { throw TooLarge() }
+            var data = Data()
+            if declared > 0 { data.reserveCapacity(Int(declared)) }
+            var chunk = [UInt8]()
+            chunk.reserveCapacity(Self.chunkSize)
+            for try await byte in bytes {
+                chunk.append(byte)
+                if chunk.count == Self.chunkSize {
+                    data.append(contentsOf: chunk)
+                    chunk.removeAll(keepingCapacity: true)
+                }
+                if data.count + chunk.count > maxBytes { throw TooLarge() }
+            }
+            data.append(contentsOf: chunk)
+            return (data, response.mimeType)
+        } catch {
+            bytes.task.cancel()
+            throw error
+        }
     }
+
+    private static let chunkSize = 64 * 1024
 }
 
 public struct HTMLArchiver: Sendable {

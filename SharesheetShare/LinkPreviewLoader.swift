@@ -2,6 +2,7 @@ import Foundation
 import LinkPresentation
 import SharesheetCore
 import UIKit
+import UniformTypeIdentifiers
 
 struct LinkPreview: Sendable {
     var title: String?
@@ -16,7 +17,7 @@ struct LinkPreview: Sendable {
 @MainActor
 final class LinkPreviewLoader {
     private static let timeout: TimeInterval = 5
-    private nonisolated static let maxPixelSize: CGFloat = 600
+    private nonisolated static let maxPixelSize = 600
     private var provider: LPMetadataProvider?
 
     func load(_ url: URL, into directory: URL) async -> LinkPreview? {
@@ -43,21 +44,13 @@ final class LinkPreviewLoader {
         provider?.cancel()
     }
 
-    /// Loads the preview image, scales it down and writes it as JPEG; nil on any failure.
+    /// Loads the preview image and writes a JPEG of at most `maxPixelSize` pixels, decoded straight at that size
+    /// so a large image never reaches full-size memory in the extension; nil on any failure.
     nonisolated private static func writeImage(
         _ provider: NSItemProvider, to destination: URL, completion: @escaping @Sendable (URL?) -> Void
     ) {
-        _ = provider.loadObject(ofClass: UIImage.self) { object, _ in
-            guard let image = object as? UIImage else { return completion(nil) }
-            let pixels = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
-            let factor = min(1, maxPixelSize / max(pixels.width, pixels.height, 1))
-            let size = CGSize(width: pixels.width * factor, height: pixels.height * factor)
-            let format = UIGraphicsImageRendererFormat()
-            format.scale = 1
-            let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-                image.draw(in: CGRect(origin: .zero, size: size))
-            }
-            guard let data = resized.jpegData(compressionQuality: 0.7) else { return completion(nil) }
+        let write: @Sendable (Data?) -> Void = { data in
+            guard let data else { return completion(nil) }
             do {
                 try FileManager.default.createDirectory(
                     at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -66,6 +59,10 @@ final class LinkPreviewLoader {
             } catch {
                 completion(nil)
             }
+        }
+        // Data-backed providers are written to a temporary file too; it only lives until this handler returns.
+        _ = provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { url, _ in
+            write(url.flatMap { ImageDownsampler.jpegData(fromFileAt: $0, maxPixelSize: maxPixelSize) })
         }
     }
 }
