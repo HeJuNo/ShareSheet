@@ -34,6 +34,9 @@ struct ResolvingItemStore: ItemStore {
         try await store().create(draft, in: collection)
     }
     func update(_ item: Item) async throws -> Item { try await store().update(item) }
+    func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) async throws -> Item {
+        try await store().modify(id, transform)
+    }
     func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item {
         try await store().move(id, to: collection)
     }

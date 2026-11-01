@@ -49,6 +49,29 @@ struct AppModelEditingTests {
         #expect(saved == onDisk)
     }
 
+    @Test func saveIsAtomicAgainstACaptureWrite() async throws {
+        let env = try ModelEnv()
+        let created = try await env.store.create(
+            ItemDraft(type: .link, url: URL(string: "https://example.com")!, title: "Page", capture: .pending),
+            in: .unsorted)
+        // Any read outside the store's atomic step is followed by a capture write, as if the runner
+        // finished right then. A non-atomic save would then overwrite the capture result.
+        let store = CaptureAfterReadStore(base: env.store)
+        let model = AppModel(storeFactory: { store }, index: env.index, inbox: env.inbox, runner: nil)
+        await model.refresh()
+        var edited = try await env.store.item(created.id)
+        edited.tags = ["web"]
+
+        _ = try await model.save(edited)
+
+        let onDisk = try await env.store.item(created.id)
+        #expect(onDisk.tags == ["web"])
+        if store.flag.fired {
+            #expect(onDisk.screenshot == "_attachments/shot.png")
+            #expect(onDisk.capture == .done)
+        }
+    }
+
     @Test func savingADeletedItemThrowsNotFound() async throws {
         let env = try ModelEnv()
         let created = try await env.store.create(ItemDraft(type: .text, title: "Gone"), in: .unsorted)
@@ -134,4 +157,53 @@ struct AppModelEditingTests {
         #expect(await model.attachmentURL("_attachments/missing.png") == nil)
         #expect(await model.attachmentURL(present) != nil)
     }
+}
+
+/// Wraps a store; right after each `item(_:)` read it writes capture results to that item.
+private final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    var fired: Bool {
+        get { lock.withLock { value } }
+        set { lock.withLock { value = newValue } }
+    }
+}
+
+private struct CaptureAfterReadStore: ItemStore {
+    let base: any ItemStore
+    let flag = Flag()
+    func listItems() async throws -> [Item] { try await base.listItems() }
+    func item(_ id: ItemID) async throws -> Item {
+        let item = try await base.item(id)
+        flag.fired = true
+        _ = try await base.modify(id) {
+            $0.screenshot = "_attachments/shot.png"
+            $0.capture = .done
+        }
+        return item
+    }
+    func findItem(url: URL) async throws -> Item? { try await base.findItem(url: url) }
+    func create(_ draft: ItemDraft, in collection: CollectionPath) async throws -> Item {
+        try await base.create(draft, in: collection)
+    }
+    func update(_ item: Item) async throws -> Item { try await base.update(item) }
+    func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) async throws -> Item {
+        try await base.modify(id, transform)
+    }
+    func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item {
+        try await base.move(id, to: collection)
+    }
+    func delete(_ id: ItemID) async throws { try await base.delete(id) }
+    func addAttachment(from source: URL, preferredName: String) async throws -> String {
+        try await base.addAttachment(from: source, preferredName: preferredName)
+    }
+    func attachmentURL(_ relativePath: String) async throws -> URL { try await base.attachmentURL(relativePath) }
+    func collections() async throws -> [CollectionPath] { try await base.collections() }
+    func createCollection(named name: String, in parent: CollectionPath) async throws -> CollectionPath {
+        try await base.createCollection(named: name, in: parent)
+    }
+    func deleteCollection(_ path: CollectionPath, moveItemsTo destination: CollectionPath?) async throws {
+        try await base.deleteCollection(path, moveItemsTo: destination)
+    }
+    func changes() -> AsyncStream<Void> { base.changes() }
 }

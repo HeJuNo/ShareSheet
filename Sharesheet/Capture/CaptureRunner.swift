@@ -86,12 +86,13 @@ actor CaptureRunner {
             }
         }
 
-        // Re-read so edits made while capturing survive; only the capture fields are ours to change.
-        guard var fresh = try? await store.item(item.id) else { return .gone }
-        if let screenshot { fresh.screenshot = screenshot }
-        if let archive { fresh.archive = archive }
-        fresh.capture = succeeded ? .done : .failed
-        guard let saved = try? await store.update(fresh) else { return .gone }
+        // One store step so edits made while capturing survive; only the capture fields are ours to change.
+        let (newScreenshot, newArchive, state) = (screenshot, archive, succeeded ? CaptureState.done : .failed)
+        guard let saved = try? await store.modify(item.id, {
+            if let newScreenshot { $0.screenshot = newScreenshot }
+            if let newArchive { $0.archive = newArchive }
+            $0.capture = state
+        }) else { return .gone }
         try? index.upsert(saved)
         if let archive, let archiveText { try? index.setArchiveText(archiveText, forArchive: archive) }
         if succeeded { await storeFavicon(host: item.url?.host(), iconURL: iconURL) }

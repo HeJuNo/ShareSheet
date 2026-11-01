@@ -91,10 +91,11 @@ struct ScreenshotThumbnail: View {
                     missing = true
                     return
                 }
-                let width = geometry.size.width * displayScale
-                let height = Self.height * displayScale
+                let path = relativePath
+                let width = Int(geometry.size.width * displayScale)
+                let height = Int(Self.height * displayScale)
                 let decoded = await Task.detached(priority: .userInitiated) {
-                    ScreenshotDecoder.top(of: resolved, targetWidth: width, height: height)
+                    ScreenshotDecoder.thumbnail(of: resolved, key: path, width: width, height: height)
                 }.value
                 url = resolved
                 image = decoded
@@ -127,16 +128,41 @@ enum ScreenshotDecoder {
         }
     }
 
-    /// The top `height` pixels of the image at `targetWidth`, copied into a bitmap of their own.
-    static func top(of url: URL, targetWidth: CGFloat, height: CGFloat) -> CGImage? {
-        guard let image = decode(url, targetWidth: targetWidth),
-            let cropped = image.cropping(to: CGRect(x: 0, y: 0, width: image.width, height: min(image.height, Int(height)))),
+    /// NSCache is documented thread-safe.
+    nonisolated(unsafe) private static let thumbnails: NSCache<NSString, CGImage> = {
+        let cache = NSCache<NSString, CGImage>()
+        cache.countLimit = 64
+        return cache
+    }()
+
+    /// The top `height` pixels of the image at (at most) `width` pixels wide, cached by `key` and width.
+    /// The full image is decoded once, without caching, and released before this returns.
+    static func thumbnail(of url: URL, key: String, width: Int, height: Int) -> CGImage? {
+        let cacheKey = "\(width)|\(key)" as NSString
+        if let cached = thumbnails.object(forKey: cacheKey) { return cached }
+        guard let image = autoreleasepool(invoking: { top(of: url, width: width, height: height) }) else { return nil }
+        thumbnails.setObject(image, forKey: cacheKey)
+        return image
+    }
+
+    private static func top(of url: URL, width: Int, height: Int) -> CGImage? {
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard width > 0, height > 0,
+            let source = CGImageSourceCreateWithURL(url as CFURL, options),
+            let full = CGImageSourceCreateImageAtIndex(source, 0, options), full.width > 0
+        else { return nil }
+        let outputWidth = min(width, full.width)
+        let scale = Double(outputWidth) / Double(full.width)
+        let sourceHeight = min(full.height, Int((Double(height) / scale).rounded(.up)))
+        let outputHeight = max(1, Int((Double(sourceHeight) * scale).rounded()))
+        guard let top = full.cropping(to: CGRect(x: 0, y: 0, width: full.width, height: sourceHeight)),
             let space = CGColorSpace(name: CGColorSpace.sRGB),
             let context = CGContext(
-                data: nil, width: cropped.width, height: cropped.height, bitsPerComponent: 8, bytesPerRow: 0,
+                data: nil, width: outputWidth, height: outputHeight, bitsPerComponent: 8, bytesPerRow: 0,
                 space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return nil }
-        context.draw(cropped, in: CGRect(x: 0, y: 0, width: cropped.width, height: cropped.height))
+        context.interpolationQuality = .high
+        context.draw(top, in: CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight))
         return context.makeImage()
     }
 

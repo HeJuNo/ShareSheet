@@ -27,6 +27,9 @@ public final class FolderItemStore: ItemStore {
         try await worker.create(draft, in: collection)
     }
     public func update(_ item: Item) async throws -> Item { try await worker.update(item) }
+    public func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) async throws -> Item {
+        try await worker.modify(id, transform)
+    }
     public func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item {
         try await worker.move(id, to: collection)
     }
@@ -160,6 +163,18 @@ private actor Worker {
         }
         var item = item
         item.created = Self.wholeSeconds(item.created)
+        try write(item)
+        return item
+    }
+
+    /// Synchronous inside the actor, so read, transform and write cannot interleave with another mutation.
+    func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) throws -> Item {
+        let original = try read(id)
+        var item = original
+        try transform(&item)
+        item.id = original.id
+        item.created = Self.wholeSeconds(item.created)
+        guard item != original else { return original }
         try write(item)
         return item
     }

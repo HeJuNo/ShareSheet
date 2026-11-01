@@ -272,3 +272,59 @@ private func mkdir(_ root: URL, _ path: String) throws {
     #expect(item.capture == .pending)
     #expect(try await store.item(item.id).capture == .pending)
 }
+
+@Test func concurrentModifiesOfDifferentFieldsBothSurvive() async throws {
+    let (store, _) = try makeStore()
+    let item = try await store.create(.fixture(title: "T"), in: .unsorted)
+    for round in 0..<50 {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { _ = try await store.modify(item.id) { $0.title = "Title \(round)" } }
+            group.addTask { _ = try await store.modify(item.id) { $0.note = "Note \(round)" } }
+            try await group.waitForAll()
+        }
+        let saved = try await store.item(item.id)
+        #expect(saved.title == "Title \(round)")
+        #expect(saved.note == "Note \(round)")
+    }
+}
+
+@Test func concurrentModifiesAllApply() async throws {
+    let (store, _) = try makeStore()
+    let item = try await store.create(.fixture(title: "T"), in: .unsorted)
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        for n in 0..<50 {
+            group.addTask { _ = try await store.modify(item.id) { $0.tags.append("tag\(n)") } }
+        }
+        try await group.waitForAll()
+    }
+    #expect(Set(try await store.item(item.id).tags) == Set((0..<50).map { "tag\($0)" }))
+}
+
+@Test func modifyReturnsTheWrittenItem() async throws {
+    let (store, _) = try makeStore()
+    let item = try await store.create(.fixture(title: "T"), in: .unsorted)
+    let modified = try await store.modify(item.id) { $0.favorite = true }
+    #expect(modified.favorite)
+    #expect(try await store.item(item.id) == modified)
+}
+
+@Test func modifyOfAMissingItemThrowsNotFound() async throws {
+    let (store, _) = try makeStore()
+    await #expect(throws: StoreError.notFound("Unsorted/Gone.md")) {
+        _ = try await store.modify(ItemID(relativePath: "Unsorted/Gone.md")) { $0.title = "X" }
+    }
+}
+
+@Test func unchangedModifyDoesNotWrite() async throws {
+    let (store, root) = try makeStore()
+    let item = try await store.create(.fixture(title: "T"), in: .unsorted)
+    let file = root.appending(path: item.id.relativePath)
+    let old = Date(timeIntervalSince1970: 1_000_000_000)
+    try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: file.path)
+
+    let result = try await store.modify(item.id) { $0.title = "T" }
+
+    #expect(result == item)
+    let modified = try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date
+    #expect(modified == old)
+}

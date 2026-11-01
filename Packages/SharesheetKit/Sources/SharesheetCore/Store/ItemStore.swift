@@ -7,6 +7,9 @@ public protocol ItemStore: Sendable {
     func findItem(url: URL) async throws -> Item?
     func create(_ draft: ItemDraft, in collection: CollectionPath) async throws -> Item
     func update(_ item: Item) async throws -> Item
+    /// Reads the item, applies `transform` and writes the result, as one step no other mutation of this store
+    /// interleaves with. Writes nothing when `transform` changed nothing; throws `.notFound` when it is gone.
+    func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) async throws -> Item
     func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item
     func delete(_ id: ItemID) async throws
     /// Returns the library-relative path, e.g. `_attachments/x.png`.

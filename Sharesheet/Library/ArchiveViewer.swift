@@ -3,7 +3,7 @@ import UIKit
 import WebKit
 
 /// The saved HTML archive of a page, offline: scripts off, nothing stored, read access limited to its folder.
-/// Tapped links open in Safari.
+/// Only file navigations load; tapped web links open in Safari, every other navigation is cancelled.
 struct ArchiveViewer: View {
     let relativePath: String
     @Environment(AppModel.self) private var model
@@ -51,10 +51,14 @@ private struct ArchiveWebView: UIViewRepresentable {
         func webView(
             _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction
         ) async -> WKNavigationActionPolicy {
-            guard navigationAction.navigationType == .linkActivated, let target = navigationAction.request.url,
-                !target.isFileURL
-            else { return .allow }
-            await UIApplication.shared.open(target)
+            // Only the local archive loads here; a tapped web link goes to Safari, anything else is refused.
+            guard let target = navigationAction.request.url else { return .cancel }
+            if target.isFileURL { return .allow }
+            if navigationAction.navigationType == .linkActivated,
+                let scheme = target.scheme?.lowercased(), scheme == "http" || scheme == "https"
+            {
+                await UIApplication.shared.open(target)
+            }
             return .cancel
         }
     }

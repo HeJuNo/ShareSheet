@@ -219,9 +219,7 @@ enum AppModelError: Error, Equatable {
     func toggleFavorite(_ item: IndexedItem) async throws {
         let store = try requireStore()
         do {
-            var full = try await store.item(item.id)
-            full.favorite.toggle()
-            let saved = try await store.update(full)
+            let saved = try await store.modify(item.id) { $0.favorite.toggle() }
             try? index.upsert(saved)
         } catch {
             Self.log.error("Toggling favorite failed: \(error)")
@@ -238,18 +236,19 @@ enum AppModelError: Error, Equatable {
         try await requireStore().item(id)
     }
 
-    /// Writes the user-editable fields (title, note, tags, favorite) of `item` onto a fresh read of its
-    /// file, so capture results written meanwhile survive. Throws `StoreError.notFound` when it is gone.
+    /// Writes the user-editable fields (title, note, tags, favorite) of `item` onto its file in one store
+    /// step, so capture results written meanwhile survive. Throws `StoreError.notFound` when it is gone.
     func save(_ item: Item) async throws -> Item {
         let store = try requireStore()
         let saved: Item
         do {
-            var fresh = try await store.item(item.id)
-            fresh.title = item.title
-            fresh.note = item.note
-            fresh.tags = item.tags
-            fresh.favorite = item.favorite
-            saved = try await store.update(fresh)
+            let (title, note, tags, favorite) = (item.title, item.note, item.tags, item.favorite)
+            saved = try await store.modify(item.id) {
+                $0.title = title
+                $0.note = note
+                $0.tags = tags
+                $0.favorite = favorite
+            }
         } catch {
             Self.log.error("Saving an item failed: \(error)")
             throw error

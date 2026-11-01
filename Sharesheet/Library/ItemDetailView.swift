@@ -28,7 +28,7 @@ struct ItemDetailView: View {
     }
 
     private enum Failure {
-        case gone, load, save, move, delete
+        case gone, load, save, move, delete, createCollection
 
         var title: Text {
             switch self {
@@ -37,6 +37,7 @@ struct ItemDetailView: View {
             case .save: Text("Couldn’t save the item")
             case .move: Text("Couldn’t move the item")
             case .delete: Text("Couldn’t delete the item")
+            case .createCollection: Text("Couldn’t create the collection")
             }
         }
 
@@ -46,6 +47,7 @@ struct ItemDetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
     @State private var id: ItemID
     @State private var collection: CollectionPath
     @State private var item: Item?
@@ -88,13 +90,16 @@ struct ItemDetailView: View {
             guard destination != id.collection else { return }
             Task { await move(to: destination) }
         }
-        .onDisappear { saveOnLeaving() }
+        .onDisappear { flush(committingPendingTag: true) }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { flush(committingPendingTag: false) }
+        }
         .confirmationDialog("Delete this item?", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { Task { await delete() } }
         } message: {
             Text(verbatim: item?.title ?? "")
         }
-        .alert(failure?.title ?? Text(verbatim: ""), isPresented: isPresented($failure), presenting: failure) { failure in
+        .alert(failure?.title ?? Text(verbatim: ""), isPresented: $failure.isPresent(), presenting: failure) { failure in
             Button("OK") { if failure.leavesScreen { dismiss() } }
         }
     }
@@ -125,7 +130,12 @@ struct ItemDetailView: View {
             }
             Section("Collection") {
                 CollectionPicker(selection: $collection, collections: model.collections) { name, parent in
-                    try? await model.createCollection(named: name, in: parent)
+                    do {
+                        return try await model.createCollection(named: name, in: parent)
+                    } catch {
+                        failure = .createCollection
+                        return nil
+                    }
                 }
             }
             if !item.highlights.isEmpty {
@@ -265,10 +275,11 @@ struct ItemDetailView: View {
         }
     }
 
-    /// Takes the file's version of `loaded`, keeping edits not yet saved.
-    private func merge(_ loaded: Item) {
+    /// Takes the file's version of `loaded`, keeping edits made since `reference`: the snapshot that was
+    /// saved, or the baseline when nothing was.
+    private func merge(_ loaded: Item, since reference: Edits?) {
         var merged = loaded
-        if let current = item, let baseline, Edits(current) != baseline {
+        if let current = item, let reference, Edits(current) != reference {
             Edits(current).apply(to: &merged)
         }
         merged.id = id
@@ -286,19 +297,27 @@ struct ItemDetailView: View {
         }
     }
 
-    private func saveOnLeaving() {
+    /// Saves now, without waiting for the debounce. The snapshot is taken before any suspension, so
+    /// it is what the screen showed when leaving it or going to the background.
+    private func flush(committingPendingTag: Bool) {
         saveTask?.cancel()
-        guard !isGone, let current = item else { return }
-        if !pendingTag.trimmingCharacters(in: .whitespaces).isEmpty {
-            item?.tags = TagField.adding(pendingTag, to: current.tags)
+        guard !isGone, var snapshot = item, let baseline else { return }
+        if committingPendingTag, !pendingTag.trimmingCharacters(in: .whitespaces).isEmpty {
+            snapshot.tags = TagField.adding(pendingTag, to: snapshot.tags)
+            item = snapshot
         }
-        Task { await save() }
+        guard Edits(snapshot) != baseline else { return }
+        Task { await persist(snapshot) }
     }
 
     private func save() async {
-        guard !isGone, let current = item, let baseline, Edits(current) != baseline else { return }
+        guard !isGone, let snapshot = item, let baseline, Edits(snapshot) != baseline else { return }
+        await persist(snapshot)
+    }
+
+    private func persist(_ snapshot: Item) async {
         do {
-            merge(try await model.save(current))
+            merge(try await model.save(snapshot), since: Edits(snapshot))
         } catch StoreError.notFound {
             isGone = true
             failure = .gone
@@ -339,11 +358,7 @@ struct ItemDetailView: View {
         isCapturing = true
         await model.retryCapture(id)
         isCapturing = false
-        if let loaded = try? await model.loadItem(id) { merge(loaded) }
-    }
-
-    private func isPresented<T>(_ value: Binding<T?>) -> Binding<Bool> {
-        Binding(get: { value.wrappedValue != nil }, set: { if !$0 { value.wrappedValue = nil } })
+        if let loaded = try? await model.loadItem(id) { merge(loaded, since: baseline) }
     }
 }
 

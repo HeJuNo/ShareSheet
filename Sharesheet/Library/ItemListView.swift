@@ -132,14 +132,14 @@ struct ItemResults: View {
             }
         }
         .confirmationDialog(
-            "Delete this item?", isPresented: isPresented($pendingDelete), titleVisibility: .visible,
+            "Delete this item?", isPresented: $pendingDelete.isPresent(), titleVisibility: .visible,
             presenting: pendingDelete
         ) { item in
             Button("Delete", role: .destructive) { delete(item) }
         } message: { item in
             Text(verbatim: item.title)
         }
-        .alert(failure?.title ?? Text(verbatim: ""), isPresented: isPresented($failure)) {
+        .alert(failure?.title ?? Text(verbatim: ""), isPresented: $failure.isPresent()) {
             Button("OK") {}
         }
     }
@@ -154,9 +154,5 @@ struct ItemResults: View {
         Task {
             do { try await model.delete(item) } catch { failure = .delete }
         }
-    }
-
-    private func isPresented<T>(_ value: Binding<T?>) -> Binding<Bool> {
-        Binding(get: { value.wrappedValue != nil }, set: { if !$0 { value.wrappedValue = nil } })
     }
 }

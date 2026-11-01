@@ -15,7 +15,9 @@ struct HomeView: View {
     @State private var collectionDeleteFailure: CollectionDeleteFailure?
 
     private enum CollectionDeleteFailure {
-        case notEmpty, other
+        /// A plain delete found content; the alert offers moving it to Unsorted.
+        case notEmpty(CollectionPath)
+        case other
 
         var title: Text {
             switch self {
@@ -78,7 +80,7 @@ struct HomeView: View {
                 Button("OK") {}
             }
             .confirmationDialog(
-                "Delete this collection?", isPresented: isPresented($pendingCollectionDelete),
+                "Delete this collection?", isPresented: $pendingCollectionDelete.isPresent(),
                 titleVisibility: .visible, presenting: pendingCollectionDelete
             ) { path in
                 if (model.counts.byCollection[path] ?? 0) == 0 {
@@ -92,9 +94,17 @@ struct HomeView: View {
                 Text(verbatim: path.components.joined(separator: " / "))
             }
             .alert(
-                collectionDeleteFailure?.title ?? Text(verbatim: ""), isPresented: isPresented($collectionDeleteFailure)
-            ) {
-                Button("OK") {}
+                collectionDeleteFailure?.title ?? Text(verbatim: ""), isPresented: $collectionDeleteFailure.isPresent(),
+                presenting: collectionDeleteFailure
+            ) { failure in
+                if case .notEmpty(let path) = failure {
+                    Button("Move items to Unsorted and delete", role: .destructive) {
+                        deleteCollection(path, moveItemsToUnsorted: true)
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } else {
+                    Button("OK") {}
+                }
             }
         }
     }
@@ -154,16 +164,12 @@ struct HomeView: View {
         Task {
             do {
                 try await model.deleteCollection(path, moveItemsToUnsorted: moveItemsToUnsorted)
-            } catch StoreError.collectionNotEmpty {
-                collectionDeleteFailure = .notEmpty
+            } catch StoreError.collectionNotEmpty where !moveItemsToUnsorted {
+                collectionDeleteFailure = .notEmpty(path)
             } catch {
                 collectionDeleteFailure = .other
             }
         }
-    }
-
-    private func isPresented<T>(_ value: Binding<T?>) -> Binding<Bool> {
-        Binding(get: { value.wrappedValue != nil }, set: { if !$0 { value.wrappedValue = nil } })
     }
 
     private func createCollection() {
