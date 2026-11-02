@@ -7,6 +7,8 @@ struct PageSnapshot: Sendable {
     var finalURL: URL
     var iconURL: URL?
     var truncated: Bool
+    /// The page in its own dark appearance; nil when it has none.
+    var pngDark: Data? = nil
 }
 
 protocol PageCapturing: Sendable {
@@ -71,6 +73,8 @@ final class WebPageCapturer: PageCapturing {
             webView.scrollView.topEdgeEffect.isHidden = true
         }
         webView.accessibilityElementsHidden = true
+        // The main shot is always the light page, whatever appearance the device is in.
+        webView.overrideUserInterfaceStyle = .light
         window.addSubview(webView)
         let loader = PageLoader()
         webView.navigationDelegate = loader
@@ -104,6 +108,30 @@ final class WebPageCapturer: PageCapturing {
             height = min(height, content)
         }
         let screenScale = window.traitCollection.displayScale > 0 ? window.traitCollection.displayScale : UIScreen.main.scale
+        let png = try await fullPageShot(webView, height: height, screenScale: screenScale)
+        try Task.checkCancellation()
+
+        // Embedded posts follow their platform's theme, not the page's colour scheme.
+        var pngDark: Data?
+        if !fitsContent, try await hasDarkAppearance(webView, screenScale: screenScale) {
+            let darkHeight = min(try await scrollHeight(webView), maxHeight)
+            pngDark = try await fullPageShot(webView, height: darkHeight, screenScale: screenScale)
+            try Task.checkCancellation()
+        }
+        webView.overrideUserInterfaceStyle = .light
+
+        let dom = try await webView.evaluateJavaScript("document.documentElement.outerHTML") as? String ?? ""
+        try Task.checkCancellation()
+        let icon = try? await webView.evaluateJavaScript(
+            "(function(){ var l = document.querySelector('link[rel~=icon]'); return l ? l.href : null; })()") as? String
+        return PageSnapshot(
+            png: png, domHTML: dom, finalURL: webView.url ?? url,
+            iconURL: icon.flatMap { $0.isEmpty ? nil : URL(string: $0) }, truncated: fullHeight > maxHeight,
+            pngDark: pngDark)
+    }
+
+    /// The page from the top, `height` points tall, as one PNG stitched from viewport shots.
+    private func fullPageShot(_ webView: WKWebView, height: CGFloat, screenScale: CGFloat) async throws -> Data {
         let tiles = try await snapshotTiles(webView, height: height, screenScale: screenScale)
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
@@ -112,15 +140,39 @@ final class WebPageCapturer: PageCapturing {
             for (y, tile) in tiles { tile.draw(in: CGRect(x: 0, y: y, width: width, height: tile.size.height * width / tile.size.width)) }
         }
         guard let png = image.pngData() else { throw CaptureError.loadFailed("snapshot could not be encoded") }
-        try Task.checkCancellation()
+        return png
+    }
 
-        let dom = try await webView.evaluateJavaScript("document.documentElement.outerHTML") as? String ?? ""
-        try Task.checkCancellation()
-        let icon = try? await webView.evaluateJavaScript(
-            "(function(){ var l = document.querySelector('link[rel~=icon]'); return l ? l.href : null; })()") as? String
-        return PageSnapshot(
-            png: png, domHTML: dom, finalURL: webView.url ?? url,
-            iconURL: icon.flatMap { $0.isEmpty ? nil : URL(string: $0) }, truncated: fullHeight > maxHeight)
+    /// Switches the page to dark and keeps it there when its top turns clearly darker, which catches dark
+    /// styles in media queries as well as themes switched by script. Pages without one stay light.
+    private func hasDarkAppearance(_ webView: WKWebView, screenScale: CGFloat) async throws -> Bool {
+        _ = try? await webView.evaluateJavaScript("window.scrollTo({ top: 0, left: 0, behavior: 'instant' })")
+        let light = try await topBrightness(webView, screenScale: screenScale)
+        webView.overrideUserInterfaceStyle = .dark
+        try await Task.sleep(for: .milliseconds(500))
+        let dark = try await topBrightness(webView, screenScale: screenScale)
+        return light - dark > 0.2
+    }
+
+    /// Mean brightness (0 black to 1 white) of the first viewport, from a small snapshot.
+    private func topBrightness(_ webView: WKWebView, screenScale: CGFloat) async throws -> Double {
+        let config = WKSnapshotConfiguration()
+        config.rect = CGRect(x: 0, y: 0, width: width, height: viewportHeight)
+        config.snapshotWidth = NSNumber(value: 32 / Double(screenScale))
+        guard let image = try await webView.takeSnapshot(configuration: config).cgImage else { return 0 }
+        let size = 8
+        var pixels = [UInt8](repeating: 0, count: size * size * 4)
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+            let context = CGContext(
+                data: &pixels, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size * 4, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return 0 }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: size, height: size))
+        var total = 0.0
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            total += 0.2126 * Double(pixels[i]) + 0.7152 * Double(pixels[i + 1]) + 0.0722 * Double(pixels[i + 2])
+        }
+        return total / Double(size * size) / 255
     }
 
     /// The body's height including its margins, rounded up.

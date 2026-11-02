@@ -213,7 +213,7 @@ private actor Worker {
 
     func delete(_ id: ItemID) throws {
         let item = try read(id)
-        let attachments = [item.file, item.image, item.screenshot, item.archive]
+        let attachments = [item.file, item.image, item.screenshot, item.screenshotDark, item.archive]
             .compactMap { $0 }
             .filter { $0.hasPrefix(Self.attachments + "/") }
         var inUse = Set<String>()
@@ -222,7 +222,8 @@ private actor Worker {
             let scanned = try scan(.root)
             scanIsComplete = scanned.isComplete
             for other in scanned.items where other.id != id {
-                inUse.formUnion([other.file, other.image, other.screenshot, other.archive].compactMap { $0 })
+                inUse.formUnion(
+                    [other.file, other.image, other.screenshot, other.screenshotDark, other.archive].compactMap { $0 })
             }
         }
         try trashFile(try fileURL(id.relativePath))

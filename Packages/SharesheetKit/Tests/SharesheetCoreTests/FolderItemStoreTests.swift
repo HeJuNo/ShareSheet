@@ -92,6 +92,20 @@ private func mkdir(_ root: URL, _ path: String) throws {
     #expect(!exists(root, "_attachments/x.jpg"))
 }
 
+@Test func deleteTrashesTheDarkScreenshotToo() async throws {
+    let trash = RecordingTrash()
+    let (store, root) = try makeStore(trash: trash)
+    let dark = try await store.addAttachment(from: try tempFile(named: "d.png", bytes: 5), preferredName: "d.png")
+    var item = try await store.create(.fixture(title: "A"), in: .unsorted)
+    item.screenshotDark = dark
+    item = try await store.update(item)
+
+    try await store.delete(item.id)
+
+    #expect(trash.trashed.map(\.lastPathComponent) == ["A.md", "d.png"])
+    #expect(!exists(root, "_attachments/d.png"))
+}
+
 @Test func collectionsAreNestedAndSkipReserved() async throws {
     let (store, root) = try makeStore()
     for dir in ["Billa/2026", "_attachments", ".trash"] { try mkdir(root, dir) }

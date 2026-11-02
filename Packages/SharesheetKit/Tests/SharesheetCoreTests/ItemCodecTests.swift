@@ -31,6 +31,14 @@ import Testing
     let decoded = try ItemCodec.decode(ItemCodec.encode(item), id: item.id)
     #expect(decoded == item)
 }
+@Test func roundTripsDarkScreenshot() throws {
+    var item = Item.fixture(title: "Dark")
+    item.screenshot = "_attachments/dark-2026-11-02.png"
+    item.screenshotDark = "_attachments/dark-2026-11-02-dark.png"
+    let text = ItemCodec.encode(item)
+    #expect(text.contains("screenshot_dark: \"_attachments/dark-2026-11-02-dark.png\""))
+    #expect(try ItemCodec.decode(text, id: item.id) == item)
+}
 @Test func preservesUnknownKeysAndExtraBody() throws {
     let text = "---\ntype: link\nurl: \"https://a.b/\"\ntitle: \"T\"\ntags: []\nfavorite: false\ncreated: 2026-10-31T20:44:00Z\nobsidian-cssclass: wide\n---\n\nnote\n\n## Highlights\n\n> h1\n\nfooter text\n"
     let item = try ItemCodec.decode(text, id: ItemID(relativePath: "Unsorted/T.md"))

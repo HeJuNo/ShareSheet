@@ -85,7 +85,8 @@ private final class FakeCapturer: PageCapturing, @unchecked Sendable {
         }
         return PageSnapshot(
             png: tinyPNG, domHTML: "<html><body><p>lorem ipsum</p></body></html>", finalURL: url,
-            iconURL: URL(string: "https://example.com/icon.png"), truncated: false)
+            iconURL: URL(string: "https://example.com/icon.png"), truncated: false,
+            pngDark: url.path().contains("dark") ? tinyPNG : nil)
     }
 }
 
@@ -242,6 +243,21 @@ struct CaptureRunnerTests {
         #expect(result.done == 1)
         #expect(capturer.captured == [url])
         #expect(capturer.renderedHTML.isEmpty)
+    }
+
+    @Test func darkShotIsSavedNextToTheLightOne() async throws {
+        let env = try Env()
+        let dark = try await env.makeItem("dark", capture: .pending)
+        let light = try await env.makeItem("light", capture: .pending)
+
+        _ = await env.runner(FakeCapturer()).runPending()
+
+        let savedDark = try await env.store.item(dark.id)
+        let darkShot = try #require(savedDark.screenshotDark)
+        #expect(darkShot != savedDark.screenshot)
+        #expect(darkShot.hasSuffix(".png"))
+        #expect(FileManager.default.fileExists(atPath: try await env.store.attachmentURL(darkShot).path))
+        #expect(try await env.store.item(light.id).screenshotDark == nil)
     }
 
     @Test func runnerSkipsNonPending() async throws {

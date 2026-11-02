@@ -47,6 +47,8 @@ public struct Item: Equatable, Sendable {
     public var created: Date
     public var image: String?
     public var screenshot: String?
+    /// The page in its own dark appearance, captured only for pages that have one.
+    public var screenshotDark: String?
     public var archive: String?
     public var capture: CaptureState?
     public var note: String
@@ -61,7 +63,7 @@ public struct Item: Equatable, Sendable {
     public init(
         id: ItemID, type: ItemType, url: URL? = nil, file: String? = nil, title: String,
         description: String? = nil, tags: [String] = [], favorite: Bool = false, created: Date,
-        image: String? = nil, screenshot: String? = nil, archive: String? = nil,
+        image: String? = nil, screenshot: String? = nil, screenshotDark: String? = nil, archive: String? = nil,
         capture: CaptureState? = nil, note: String = "", content: String? = nil,
         highlights: [String] = [], extraFrontmatter: [String] = [], extraBody: String = ""
     ) {
@@ -76,6 +78,7 @@ public struct Item: Equatable, Sendable {
         self.created = created
         self.image = image
         self.screenshot = screenshot
+        self.screenshotDark = screenshotDark
         self.archive = archive
         self.capture = capture
         self.note = note

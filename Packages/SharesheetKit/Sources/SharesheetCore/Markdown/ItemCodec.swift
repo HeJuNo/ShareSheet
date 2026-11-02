@@ -9,7 +9,7 @@ public enum CodecError: Error, Equatable {
 public enum ItemCodec {
     private static let knownKeys: Set<String> = [
         "type", "url", "file", "title", "description", "tags", "favorite", "created",
-        "image", "screenshot", "archive", "capture",
+        "image", "screenshot", "screenshot_dark", "archive", "capture",
     ]
     private static let highlightsHeading = "## Highlights"
     private static let noteHeading = "## Note"
@@ -28,6 +28,7 @@ public enum ItemCodec {
         lines.append("created: \(isoFormatter().string(from: item.created))")
         if let image = item.image { lines.append("image: \(quote(image))") }
         if let screenshot = item.screenshot { lines.append("screenshot: \(quote(screenshot))") }
+        if let dark = item.screenshotDark { lines.append("screenshot_dark: \(quote(dark))") }
         if let archive = item.archive { lines.append("archive: \(quote(archive))") }
         if let capture = item.capture { lines.append("capture: \(capture.rawValue)") }
         lines.append(contentsOf: item.extraFrontmatter)
@@ -127,7 +128,8 @@ public enum ItemCodec {
             id: id, type: type, url: url, file: try optional("file"), title: try required("title"),
             description: try optional("description"), tags: try blockTags ?? tags(values["tags"]),
             favorite: favorite, created: created, image: try optional("image"),
-            screenshot: try optional("screenshot"), archive: try optional("archive"),
+            screenshot: try optional("screenshot"), screenshotDark: try optional("screenshot_dark"),
+            archive: try optional("archive"),
             capture: capture, extraFrontmatter: extra)
 
         // Body: drop the single blank separator line after the closing fence.

@@ -149,6 +149,8 @@ targets:
         buildPhase: resources
       - path: SharesheetTests/Fixtures/smooth-page.html
         buildPhase: resources
+      - path: SharesheetTests/Fixtures/dark-page.html
+        buildPhase: resources
     dependencies:
       - target: Sharesheet
     settings:

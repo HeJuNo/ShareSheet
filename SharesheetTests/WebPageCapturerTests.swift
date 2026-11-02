@@ -94,6 +94,26 @@ struct WebPageCapturerTests {
         #expect(isClose(middle, to: [0, 0, 255]), "embed pixel \(middle)")
     }
 
+    /// A page with its own dark styles is captured twice; the first shot is light whatever the system uses.
+    @Test func pageWithDarkStylesIsAlsoCapturedDark() async throws {
+        let capturer = WebPageCapturer()
+        _ = try await capturer.capture(try fixture("color-page"))
+        capturer.hostWindow?.overrideUserInterfaceStyle = .dark
+
+        let snapshot = try await capturer.capture(try fixture("dark-page"))
+
+        let light = try #require(UIImage(data: snapshot.png)?.cgImage)
+        let dark = try #require(snapshot.pngDark.flatMap { UIImage(data: $0)?.cgImage })
+        #expect(isClose(pixel(light, x: 390, y: 400), to: [255, 255, 255]), "light \(pixel(light, x: 390, y: 400))")
+        #expect(isClose(pixel(dark, x: 390, y: 400), to: [0, 0, 0]), "dark \(pixel(dark, x: 390, y: 400))")
+        #expect(dark.height == light.height)
+    }
+
+    @Test func pageWithoutDarkStylesGetsNoDarkShot() async throws {
+        let snapshot = try await WebPageCapturer().capture(try fixture("color-page"))
+        #expect(snapshot.pngDark == nil)
+    }
+
     /// Colour matching tolerates small differences from colour-space conversion.
     private func isClose(_ rgb: [UInt8], to expected: [UInt8]) -> Bool {
         zip(rgb, expected).allSatisfy { abs(Int($0) - Int($1)) <= 8 }

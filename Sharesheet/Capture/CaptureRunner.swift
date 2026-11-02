@@ -149,7 +149,8 @@ actor CaptureRunner {
             try? index.upsert(saved)
             return .skipped
         }
-        var screenshot: String?, archive: String?, archiveText: String?, iconURL: URL?, postText: String?
+        var screenshot: String?, screenshotDark: String?, archive: String?, archiveText: String?, iconURL: URL?
+        var postText: String?
         var succeeded = false
         var transient = false
 
@@ -166,6 +167,9 @@ actor CaptureRunner {
             }
             try Task.checkCancellation()
             screenshot = try await saveAttachment(snapshot.png, for: item, ext: "png")
+            if let dark = snapshot.pngDark {
+                screenshotDark = try await saveAttachment(dark, for: item, ext: "png", suffix: "dark")
+            }
             // An embedded post's rendered DOM is only iframes; its markup still carries the post text.
             let html = try await archiver.archive(html: embed?.page ?? snapshot.domHTML, baseURL: snapshot.finalURL)
             try Task.checkCancellation()
@@ -181,9 +185,12 @@ actor CaptureRunner {
         // One store step so edits made while capturing survive; only the capture fields are ours to change.
         // A transient failure keeps what was saved and leaves the item pending.
         let state: CaptureState? = succeeded ? .done : transient ? nil : .failed
-        let (newScreenshot, newArchive, newText) = (screenshot, archive, postText)
+        let (newScreenshot, newDark, newArchive, newText) = (screenshot, screenshotDark, archive, postText)
+        let captured = succeeded
         guard let saved = try? await store.modify(item.id, {
             if let newScreenshot { $0.screenshot = newScreenshot }
+            // A recapture of a page that lost its dark styles drops the old dark shot.
+            if captured { $0.screenshotDark = newDark }
             if let newArchive { $0.archive = newArchive }
             if let newText, ($0.description ?? "").isEmpty { $0.description = newText }
             if let state { $0.capture = state }
@@ -221,8 +228,9 @@ actor CaptureRunner {
         return response.url
     }
 
-    private func saveAttachment(_ data: Data, for item: Item, ext: String) async throws -> String {
-        let name = FileNamer.attachmentName(base: item.title, date: item.created, ext: ext, existing: [])
+    private func saveAttachment(_ data: Data, for item: Item, ext: String, suffix: String? = nil) async throws -> String {
+        let base = suffix.map { "\(item.title) \($0)" } ?? item.title
+        let name = FileNamer.attachmentName(base: base, date: item.created, ext: ext, existing: [])
         let folder = FileManager.default.temporaryDirectory.appending(path: "capture-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }

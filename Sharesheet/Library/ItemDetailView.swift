@@ -50,6 +50,7 @@ struct ItemDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
     @State private var id: ItemID
     @State private var collection: CollectionPath
     @State private var item: Item?
@@ -190,7 +191,8 @@ struct ItemDetailView: View {
         if let file = item.file {
             FileHeader(relativePath: file) { previewURL = $0 }
         } else if let screenshot = item.screenshot {
-            ScreenshotThumbnail(relativePath: screenshot)
+            // The page's own dark appearance when there is one and the app is dark.
+            ScreenshotThumbnail(relativePath: colorScheme == .dark ? item.screenshotDark ?? screenshot : screenshot)
         } else if item.url != nil {
             switch item.capture {
             case .failed:
