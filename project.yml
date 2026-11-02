@@ -11,6 +11,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
+    # iPhone only; repeated on the targets, whose presets would set "1,2".
     TARGETED_DEVICE_FAMILY: "1"
     DEVELOPMENT_TEAM: 5H6B8DE8HE
     # Identifiers follow the team, so signed builds get com.<TEAMID>.Sharesheet with their own App Group and
@@ -75,6 +76,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(SHARESHEET_APP_ID)
         GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
         INFOPLIST_PREPROCESS: YES
         INFOPLIST_PREPROCESSOR_DEFINITIONS: SHARESHEET_ICLOUD_CONTAINER_KEY=$(SHARESHEET_ICLOUD_CONTAINER)
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -127,6 +129,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(SHARESHEET_APP_ID).Share
         GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
   SharesheetTests:
     type: bundle.unit-test
     platform: iOS
