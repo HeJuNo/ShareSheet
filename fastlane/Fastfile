@@ -144,7 +144,9 @@ platform :ios do
       )
       existing = bundle_id.get_capabilities.map(&:capability_type)
       capabilities.reject { |c| existing.include?(c) }.each do |cap|
-        bundle_id.create_capability(cap)
+        # iCloud is only accepted with a CloudKit version; XCODE_6 is the current one.
+        settings = cap == "ICLOUD" ? [{ key: "ICLOUD_VERSION", options: [{ key: "XCODE_6" }] }] : []
+        bundle_id.create_capability(cap, settings: settings)
       end
     end
 
