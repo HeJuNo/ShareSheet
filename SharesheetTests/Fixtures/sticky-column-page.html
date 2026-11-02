@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sticky column page</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #fff; }
+  #header { position: sticky; top: 0; height: 40px; background: #888; z-index: 1; }
+  #spacer { height: 2000px; background: #00f; }
+  #scroller { overflow-x: auto; }
+  table { border-collapse: collapse; width: 800px; }
+  td { height: 400px; padding: 0; background: #fff; }
+  td.name { position: sticky; left: 0; width: 200px; background: #f00; }
+</style>
+</head>
+<body>
+<div id="header"><div style="visibility: visible; height: 40px; background: #0f0;"></div></div>
+<div id="spacer"></div>
+<div id="scroller">
+  <table><tr><td class="name"></td><td></td></tr></table>
+</div>
+</body>
+</html>

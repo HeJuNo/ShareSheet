@@ -153,6 +153,8 @@ targets:
         buildPhase: resources
       - path: SharesheetTests/Fixtures/consent-page.html
         buildPhase: resources
+      - path: SharesheetTests/Fixtures/sticky-column-page.html
+        buildPhase: resources
     dependencies:
       - target: Sharesheet
     settings:

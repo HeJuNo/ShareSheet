@@ -133,6 +133,20 @@ struct WebPageCapturerTests {
         #expect(snapshot.domHTML.contains("id=\"site-header\""))
     }
 
+    /// Only elements that stick vertically repeat in every viewport shot; a table column that sticks to the left
+    /// edge is content and stays in the shot.
+    @Test func horizontallyStickyColumnStaysVisible() async throws {
+        let snapshot = try await WebPageCapturer().capture(try fixture("sticky-column-page"))
+
+        let image = try #require(UIImage(data: snapshot.png)?.cgImage)
+        #expect(image.height == (40 + 2000 + 400) * 2)
+        let column = pixel(image, x: 100 * 2, y: (40 + 2000 + 200) * 2)
+        #expect(isClose(column, to: [255, 0, 0]), "column pixel \(column)")
+        // The second shot starts at 844 pt; the header would repeat there, even with a child that sets itself visible.
+        let secondShotTop = pixel(image, x: 100 * 2, y: (844 + 20) * 2)
+        #expect(isClose(secondShotTop, to: [0, 0, 255]), "header repeated in second shot: \(secondShotTop)")
+    }
+
     /// Colour matching tolerates small differences from colour-space conversion.
     private func isClose(_ rgb: [UInt8], to expected: [UInt8]) -> Bool {
         zip(rgb, expected).allSatisfy { abs(Int($0) - Int($1)) <= 8 }

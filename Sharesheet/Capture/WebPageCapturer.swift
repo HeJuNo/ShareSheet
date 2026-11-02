@@ -223,7 +223,8 @@ final class WebPageCapturer: PageCapturing {
     /// Snapshots the page one viewport at a time, scrolling between shots, and returns each shot with its top offset.
     /// The web view keeps its phone-sized frame: stretching it to the page height would stretch `100vh` sections
     /// with it, and a single snapshot taller than the GPU's texture limit (about 6,000 pt on a 3x iPhone) comes
-    /// back blank. Fixed and sticky elements are hidden after the first shot so headers appear only once.
+    /// back blank. Fixed elements and those sticking to the top or bottom are hidden after the first shot so headers
+    /// appear only once.
     /// Each shot is placed at the offset the page actually reached, which can fall short of the target at the bottom.
     private func snapshotTiles(_ webView: WKWebView, height: CGFloat, screenScale: CGFloat) async throws -> [(CGFloat, UIImage)] {
         var tiles: [(CGFloat, UIImage)] = []
@@ -248,12 +249,15 @@ final class WebPageCapturer: PageCapturing {
 
     private static let hideFixedElements = """
         document.querySelectorAll('body *').forEach(function (e) {
-          var p = getComputedStyle(e).position;
-          if (p === 'fixed' || p === 'sticky') { e.setAttribute('data-sharesheet-hidden', ''); }
+          var c = getComputedStyle(e);
+          // Sticky elements repeat only if they stick to the top or bottom; a column sticking left is content.
+          var sticksVertically = c.position === 'sticky' && (c.top !== 'auto' || c.bottom !== 'auto');
+          if (c.position === 'fixed' || sticksVertically) { e.setAttribute('data-sharesheet-hidden', ''); }
         });
         var s = document.createElement('style');
         s.id = 'sharesheet-hide-fixed';
-        s.textContent = '[data-sharesheet-hidden] { visibility: hidden !important; }';
+        // Opacity hides the whole subtree; children can switch visibility back on for themselves.
+        s.textContent = '[data-sharesheet-hidden] { opacity: 0 !important; }';
         document.head.appendChild(s);
         """
 
