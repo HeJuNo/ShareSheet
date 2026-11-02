@@ -16,8 +16,13 @@ FASTLANE_ISSUER_ID = ENV["FASTLANE_ISSUER_ID"]
 FASTLANE_KEY = ENV["FASTLANE_KEY"]
 ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] = "120"
 
-APP_IDENTIFIER = "com.#{TEAMID}.Sharesheet"
-SHARE_IDENTIFIER = "#{APP_IDENTIFIER}.Share"
+# Bundle-ID: Repository-Variable BUNDLE_ID oder com.<TEAMID>.Sharesheet
+BUNDLE_ID = (ENV["BUNDLE_ID"].to_s.strip.empty? ? "com.#{TEAMID}.Sharesheet" : ENV["BUNDLE_ID"].strip)
+SHARE_BUNDLE_ID = "#{BUNDLE_ID}.Share"
+APP_NAME  = "Sharesheet"
+TARGET    = "Sharesheet"
+SHARE_TARGET = "SharesheetShare"
+PROJECT   = "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj"
 
 platform :ios do
   desc "Build Sharesheet"
@@ -25,7 +30,7 @@ platform :ios do
     setup_ci if ENV['CI']
 
     update_project_team(
-      path: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
+      path: PROJECT,
       teamid: "#{TEAMID}"
     )
 
@@ -36,7 +41,7 @@ platform :ios do
     )
 
     previous_build_number = latest_testflight_build_number(
-      app_identifier: APP_IDENTIFIER,
+      app_identifier: BUNDLE_ID,
       api_key: api_key,
       initial_build_number: 0,
     )
@@ -44,14 +49,14 @@ platform :ios do
     current_build_number = previous_build_number + 1
 
     increment_build_number(
-      xcodeproj: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
+      xcodeproj: PROJECT,
       build_number: current_build_number
     )
 
     match(
       type: "appstore",
       git_basic_authorization: Base64.strict_encode64("#{GITHUB_REPOSITORY_OWNER}:#{GH_PAT}"),
-      app_identifier: [APP_IDENTIFIER, SHARE_IDENTIFIER]
+      app_identifier: [BUNDLE_ID, SHARE_BUNDLE_ID]
     )
 
     mapping = Actions.lane_context[
@@ -59,40 +64,42 @@ platform :ios do
     ]
 
     update_code_signing_settings(
-      path: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
-      profile_name: mapping[APP_IDENTIFIER],
+      path: PROJECT,
+      profile_name: mapping[BUNDLE_ID],
       code_sign_identity: "iPhone Distribution",
-      bundle_identifier: APP_IDENTIFIER,
-      targets: ["Sharesheet"]
+      bundle_identifier: BUNDLE_ID,
+      targets: [TARGET]
     )
 
     update_code_signing_settings(
-      path: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
-      profile_name: mapping[SHARE_IDENTIFIER],
+      path: PROJECT,
+      profile_name: mapping[SHARE_BUNDLE_ID],
       code_sign_identity: "iPhone Distribution",
-      bundle_identifier: SHARE_IDENTIFIER,
-      targets: ["SharesheetShare"]
+      bundle_identifier: SHARE_BUNDLE_ID,
+      targets: [SHARE_TARGET]
     )
 
     update_app_identifier(
-      xcodeproj: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
+      xcodeproj: PROJECT,
       plist_path: "Sharesheet/Info.plist",
-      app_identifier: APP_IDENTIFIER
+      app_identifier: BUNDLE_ID
     )
 
     update_app_identifier(
-      xcodeproj: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
+      xcodeproj: PROJECT,
       plist_path: "SharesheetShare/Info.plist",
-      app_identifier: SHARE_IDENTIFIER
+      app_identifier: SHARE_BUNDLE_ID
     )
 
     gym(
       export_method: "app-store",
-      project: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
-      scheme: "Sharesheet",
+      project: PROJECT,
+      scheme: TARGET,
       output_name: "Sharesheet.ipa",
       configuration: "Release",
       destination: 'generic/platform=iOS',
+      # App Group and iCloud container are derived from this ID.
+      xcargs: "SHARESHEET_APP_ID=#{BUNDLE_ID}",
       buildlog_path: 'buildlog'
     )
 
@@ -142,8 +149,8 @@ platform :ios do
     end
 
     # App and share extension share an App Group and an iCloud container.
-    configure_bundle_id("Sharesheet", APP_IDENTIFIER, ["APP_GROUPS", "ICLOUD"])
-    configure_bundle_id("Sharesheet Share", SHARE_IDENTIFIER, ["APP_GROUPS", "ICLOUD"])
+    configure_bundle_id(APP_NAME, BUNDLE_ID, ["APP_GROUPS", "ICLOUD"])
+    configure_bundle_id("#{APP_NAME} Share", SHARE_BUNDLE_ID, ["APP_GROUPS", "ICLOUD"])
   end
 
   desc "Provision Certificates"
@@ -162,7 +169,7 @@ platform :ios do
       force: false,
       verbose: true,
       git_basic_authorization: Base64.strict_encode64("#{GITHUB_REPOSITORY_OWNER}:#{GH_PAT}"),
-      app_identifier: [APP_IDENTIFIER, SHARE_IDENTIFIER]
+      app_identifier: [BUNDLE_ID, SHARE_BUNDLE_ID]
     )
   end
 
@@ -181,8 +188,8 @@ platform :ios do
       Spaceship::ConnectAPI::BundleId.find(identifier)
     end
 
-    find_bundle_id(APP_IDENTIFIER)
-    find_bundle_id(SHARE_IDENTIFIER)
+    find_bundle_id(BUNDLE_ID)
+    find_bundle_id(SHARE_BUNDLE_ID)
 
     match(
       type: "appstore",
