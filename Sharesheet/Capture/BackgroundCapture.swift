@@ -3,7 +3,8 @@ import Foundation
 
 /// Runs pending captures in a `BGProcessingTask`.
 enum BackgroundCapture {
-    static let identifier = "com.luetgendorf.Sharesheet.capture"
+    /// Listed in Info.plist's BGTaskSchedulerPermittedIdentifiers as `$(PRODUCT_BUNDLE_IDENTIFIER).capture`.
+    static let identifier = "\(Bundle.main.bundleIdentifier ?? "Sharesheet").capture"
 
     /// Must be called before the app finishes launching.
     static func register(runner: @escaping @Sendable () async -> Void) {

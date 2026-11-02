@@ -2,7 +2,9 @@ import Foundation
 
 /// Locations inside the App Group container shared by the app and the share extension.
 public enum AppGroup {
-    public static let identifier = "group.com.luetgendorf.Sharesheet"
+    /// From the app's or extension's Info.plist, where the project derives it from the team.
+    public static let identifier = Bundle.main.object(forInfoDictionaryKey: "SharesheetAppGroup") as? String
+        ?? "group.Sharesheet"
 
     /// Root of the shared App Group container, or nil when the entitlement is missing.
     public static func containerURL() -> URL? {

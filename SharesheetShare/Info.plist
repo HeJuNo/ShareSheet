@@ -41,5 +41,9 @@
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
 	</dict>
+	<key>SharesheetAppGroup</key>
+	<string>$(SHARESHEET_APP_GROUP)</string>
+	<key>SharesheetICloudContainer</key>
+	<string>$(SHARESHEET_ICLOUD_CONTAINER)</string>
 </dict>
 </plist>

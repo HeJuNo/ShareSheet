@@ -16,11 +16,8 @@ FASTLANE_ISSUER_ID = ENV["FASTLANE_ISSUER_ID"]
 FASTLANE_KEY = ENV["FASTLANE_KEY"]
 ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] = "120"
 
-# Fixed identifiers: the iCloud container and the App Group the library lives in are tied to them.
-APP_IDENTIFIER = "com.luetgendorf.Sharesheet"
-SHARE_IDENTIFIER = "com.luetgendorf.Sharesheet.Share"
-IDENTIFIERS = [APP_IDENTIFIER, SHARE_IDENTIFIER]
-PROJECT = "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj"
+APP_IDENTIFIER = "com.#{TEAMID}.Sharesheet"
+SHARE_IDENTIFIER = "#{APP_IDENTIFIER}.Share"
 
 platform :ios do
   desc "Build Sharesheet"
@@ -28,7 +25,7 @@ platform :ios do
     setup_ci if ENV['CI']
 
     update_project_team(
-      path: PROJECT,
+      path: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
       teamid: "#{TEAMID}"
     )
 
@@ -46,37 +43,56 @@ platform :ios do
 
     current_build_number = previous_build_number + 1
 
+    increment_build_number(
+      xcodeproj: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
+      build_number: current_build_number
+    )
+
     match(
       type: "appstore",
       git_basic_authorization: Base64.strict_encode64("#{GITHUB_REPOSITORY_OWNER}:#{GH_PAT}"),
-      app_identifier: IDENTIFIERS
+      app_identifier: [APP_IDENTIFIER, SHARE_IDENTIFIER]
     )
 
     mapping = Actions.lane_context[
       SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING
     ]
 
-    { "Sharesheet" => APP_IDENTIFIER, "SharesheetShare" => SHARE_IDENTIFIER }.each do |target, identifier|
-      update_code_signing_settings(
-        path: PROJECT,
-        use_automatic_signing: false,
-        team_id: "#{TEAMID}",
-        profile_name: mapping[identifier],
-        code_sign_identity: "iPhone Distribution",
-        bundle_identifier: identifier,
-        targets: [target]
-      )
-    end
+    update_code_signing_settings(
+      path: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
+      profile_name: mapping[APP_IDENTIFIER],
+      code_sign_identity: "iPhone Distribution",
+      bundle_identifier: APP_IDENTIFIER,
+      targets: ["Sharesheet"]
+    )
 
-    # Both Info.plists read the build number from CURRENT_PROJECT_VERSION.
+    update_code_signing_settings(
+      path: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
+      profile_name: mapping[SHARE_IDENTIFIER],
+      code_sign_identity: "iPhone Distribution",
+      bundle_identifier: SHARE_IDENTIFIER,
+      targets: ["SharesheetShare"]
+    )
+
+    update_app_identifier(
+      xcodeproj: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
+      plist_path: "Sharesheet/Info.plist",
+      app_identifier: APP_IDENTIFIER
+    )
+
+    update_app_identifier(
+      xcodeproj: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
+      plist_path: "SharesheetShare/Info.plist",
+      app_identifier: SHARE_IDENTIFIER
+    )
+
     gym(
       export_method: "app-store",
-      project: PROJECT,
+      project: "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj",
       scheme: "Sharesheet",
       output_name: "Sharesheet.ipa",
       configuration: "Release",
       destination: 'generic/platform=iOS',
-      xcargs: "CURRENT_PROJECT_VERSION=#{current_build_number}",
       buildlog_path: 'buildlog'
     )
 
@@ -114,29 +130,18 @@ platform :ios do
     )
 
     def configure_bundle_id(name, identifier, capabilities)
-      bundle_id = Spaceship::ConnectAPI::BundleId.find(identifier)
-      if bundle_id
-        UI.message("Found bundle ID #{identifier} (#{bundle_id.name}, #{bundle_id.platform}, seed #{bundle_id.seed_id})")
-      else
-        bundle_id = Spaceship::ConnectAPI::BundleId.create(
-          name:       name,
-          identifier: identifier,
-          platform:   "IOS"
-        )
-        UI.success("Created bundle ID #{identifier} (#{bundle_id.name}, seed #{bundle_id.seed_id})")
-      end
+      bundle_id = Spaceship::ConnectAPI::BundleId.find(identifier) || Spaceship::ConnectAPI::BundleId.create(
+        name:       name,
+        identifier: identifier,
+        platform:   "IOS"
+      )
       existing = bundle_id.get_capabilities.map(&:capability_type)
-      UI.message("Capabilities of #{identifier}: #{existing.join(', ')}")
       capabilities.reject { |c| existing.include?(c) }.each do |cap|
         bundle_id.create_capability(cap)
-        UI.success("Added #{cap} to #{identifier}")
       end
     end
 
-    UI.message("Team from the TEAMID secret: #{TEAMID == '5H6B8DE8HE' ? 'matches the project team' : 'differs from the project team 5H6B8DE8HE'}")
-    UI.message("Bundle IDs visible to this API key: #{Spaceship::ConnectAPI::BundleId.all.map(&:identifier).sort.join(', ')}")
-
-    # The App Group and the iCloud container are assigned to these identifiers in the developer portal.
+    # App and share extension share an App Group and an iCloud container.
     configure_bundle_id("Sharesheet", APP_IDENTIFIER, ["APP_GROUPS", "ICLOUD"])
     configure_bundle_id("Sharesheet Share", SHARE_IDENTIFIER, ["APP_GROUPS", "ICLOUD"])
   end
@@ -157,7 +162,7 @@ platform :ios do
       force: false,
       verbose: true,
       git_basic_authorization: Base64.strict_encode64("#{GITHUB_REPOSITORY_OWNER}:#{GH_PAT}"),
-      app_identifier: IDENTIFIERS
+      app_identifier: [APP_IDENTIFIER, SHARE_IDENTIFIER]
     )
   end
 
@@ -176,7 +181,8 @@ platform :ios do
       Spaceship::ConnectAPI::BundleId.find(identifier)
     end
 
-    IDENTIFIERS.each { |identifier| find_bundle_id(identifier) }
+    find_bundle_id(APP_IDENTIFIER)
+    find_bundle_id(SHARE_IDENTIFIER)
 
     match(
       type: "appstore",

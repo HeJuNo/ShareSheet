@@ -4,7 +4,7 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.luetgendorf.Sharesheet.capture</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).capture</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
@@ -28,7 +28,7 @@
 	<false/>
 	<key>NSUbiquitousContainers</key>
 	<dict>
-		<key>iCloud.com.luetgendorf.Sharesheet</key>
+		<key>SHARESHEET_ICLOUD_CONTAINER_KEY</key>
 		<dict>
 			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
 			<true/>
@@ -38,6 +38,10 @@
 			<string>Any</string>
 		</dict>
 	</dict>
+	<key>SharesheetAppGroup</key>
+	<string>$(SHARESHEET_APP_GROUP)</string>
+	<key>SharesheetICloudContainer</key>
+	<string>$(SHARESHEET_ICLOUD_CONTAINER)</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

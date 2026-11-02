@@ -4,7 +4,7 @@
 <dict>
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>
-		<string>iCloud.com.luetgendorf.Sharesheet</string>
+		<string>$(SHARESHEET_ICLOUD_CONTAINER)</string>
 	</array>
 	<key>com.apple.developer.icloud-services</key>
 	<array>
@@ -12,11 +12,11 @@
 	</array>
 	<key>com.apple.developer.ubiquity-container-identifiers</key>
 	<array>
-		<string>iCloud.com.luetgendorf.Sharesheet</string>
+		<string>$(SHARESHEET_ICLOUD_CONTAINER)</string>
 	</array>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.com.luetgendorf.Sharesheet</string>
+		<string>$(SHARESHEET_APP_GROUP)</string>
 	</array>
 </dict>
 </plist>

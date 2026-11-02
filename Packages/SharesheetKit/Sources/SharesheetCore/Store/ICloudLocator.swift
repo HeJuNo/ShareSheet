@@ -1,7 +1,9 @@
 import Foundation
 
 public enum ICloudLocator {
-    public static let containerIdentifier = "iCloud.com.luetgendorf.Sharesheet"
+    /// From the app's or extension's Info.plist, where the project derives it from the team.
+    public static let containerIdentifier = Bundle.main.object(forInfoDictionaryKey: "SharesheetICloudContainer") as? String
+        ?? "iCloud.Sharesheet"
 
     /// The iCloud container's `Documents` directory (with `Unsorted` created), nil if iCloud is unavailable.
     public static func libraryRoot() async -> URL? {

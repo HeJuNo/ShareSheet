@@ -5,7 +5,6 @@
 #   swift test --package-path Packages/SharesheetKit --scratch-path ~/Library/Caches/SharesheetKit-build
 name: Sharesheet
 options:
-  bundleIdPrefix: com.luetgendorf
   deploymentTarget:
     iOS: "18.0"
   createIntermediateGroups: true
@@ -14,6 +13,11 @@ settings:
     SWIFT_VERSION: "6.0"
     TARGETED_DEVICE_FAMILY: "1"
     DEVELOPMENT_TEAM: 5H6B8DE8HE
+    # Identifiers follow the team, so signed builds get com.<TEAMID>.Sharesheet with their own App Group and
+    # iCloud container. fastlane sets the team for distribution builds.
+    SHARESHEET_APP_ID: com.$(DEVELOPMENT_TEAM).Sharesheet
+    SHARESHEET_APP_GROUP: group.$(SHARESHEET_APP_ID)
+    SHARESHEET_ICLOUD_CONTAINER: iCloud.$(SHARESHEET_APP_ID)
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     IPHONEOS_DEPLOYMENT_TARGET: "18.0"
@@ -42,9 +46,9 @@ targets:
     entitlements:
       path: Sharesheet/Sharesheet.entitlements
       properties:
-        com.apple.security.application-groups: [group.com.luetgendorf.Sharesheet]
-        com.apple.developer.icloud-container-identifiers: [iCloud.com.luetgendorf.Sharesheet]
-        com.apple.developer.ubiquity-container-identifiers: [iCloud.com.luetgendorf.Sharesheet]
+        com.apple.security.application-groups: [$(SHARESHEET_APP_GROUP)]
+        com.apple.developer.icloud-container-identifiers: [$(SHARESHEET_ICLOUD_CONTAINER)]
+        com.apple.developer.ubiquity-container-identifiers: [$(SHARESHEET_ICLOUD_CONTAINER)]
         com.apple.developer.icloud-services: [CloudDocuments]
     info:
       path: Sharesheet/Info.plist
@@ -58,16 +62,21 @@ targets:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSUbiquitousContainers:
-          iCloud.com.luetgendorf.Sharesheet:
+          # Plist keys are not expanded like values; the preprocessor fills this one in (see INFOPLIST_PREPROCESS).
+          SHARESHEET_ICLOUD_CONTAINER_KEY:
             NSUbiquitousContainerIsDocumentScopePublic: true
             NSUbiquitousContainerName: Sharesheet
             NSUbiquitousContainerSupportedFolderLevels: Any
-        BGTaskSchedulerPermittedIdentifiers: [com.luetgendorf.Sharesheet.capture]
+        BGTaskSchedulerPermittedIdentifiers: [$(PRODUCT_BUNDLE_IDENTIFIER).capture]
+        SharesheetAppGroup: $(SHARESHEET_APP_GROUP)
+        SharesheetICloudContainer: $(SHARESHEET_ICLOUD_CONTAINER)
         UIBackgroundModes: [processing]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.luetgendorf.Sharesheet
+        PRODUCT_BUNDLE_IDENTIFIER: $(SHARESHEET_APP_ID)
         GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_PREPROCESS: YES
+        INFOPLIST_PREPROCESSOR_DEFINITIONS: SHARESHEET_ICLOUD_CONTAINER_KEY=$(SHARESHEET_ICLOUD_CONTAINER)
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   SharesheetShare:
     type: app-extension
@@ -88,9 +97,9 @@ targets:
     entitlements:
       path: SharesheetShare/SharesheetShare.entitlements
       properties:
-        com.apple.security.application-groups: [group.com.luetgendorf.Sharesheet]
-        com.apple.developer.icloud-container-identifiers: [iCloud.com.luetgendorf.Sharesheet]
-        com.apple.developer.ubiquity-container-identifiers: [iCloud.com.luetgendorf.Sharesheet]
+        com.apple.security.application-groups: [$(SHARESHEET_APP_GROUP)]
+        com.apple.developer.icloud-container-identifiers: [$(SHARESHEET_ICLOUD_CONTAINER)]
+        com.apple.developer.ubiquity-container-identifiers: [$(SHARESHEET_ICLOUD_CONTAINER)]
         com.apple.developer.icloud-services: [CloudDocuments]
     info:
       path: SharesheetShare/Info.plist
@@ -98,6 +107,8 @@ targets:
         CFBundleDisplayName: Sharesheet
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        SharesheetAppGroup: $(SHARESHEET_APP_GROUP)
+        SharesheetICloudContainer: $(SHARESHEET_ICLOUD_CONTAINER)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
@@ -114,7 +125,7 @@ targets:
               ).@count >= 1).@count >= 1
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.luetgendorf.Sharesheet.Share
+        PRODUCT_BUNDLE_IDENTIFIER: $(SHARESHEET_APP_ID).Share
         GENERATE_INFOPLIST_FILE: NO
   SharesheetTests:
     type: bundle.unit-test
@@ -139,7 +150,7 @@ targets:
       - target: Sharesheet
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.luetgendorf.Sharesheet.Tests
+        PRODUCT_BUNDLE_IDENTIFIER: $(SHARESHEET_APP_ID).Tests
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Sharesheet.app/Sharesheet
         BUNDLE_LOADER: $(TEST_HOST)

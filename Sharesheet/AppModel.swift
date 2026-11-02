@@ -18,7 +18,7 @@ enum AppModelError: Error, Equatable {
 
 /// Ties the iCloud library, the index, the share inbox and the capture runner together for the UI.
 @MainActor @Observable final class AppModel {
-    nonisolated private static let log = Logger(subsystem: "com.luetgendorf.Sharesheet", category: "Library")
+    nonisolated private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Sharesheet", category: "Library")
 
     private(set) var iCloudState = ICloudState.unknown
     var isICloudAvailable: Bool { iCloudState == .available }
