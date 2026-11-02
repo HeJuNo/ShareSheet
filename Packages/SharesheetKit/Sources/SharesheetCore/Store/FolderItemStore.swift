@@ -109,8 +109,16 @@ private actor Worker {
     }
 
     func attachmentURL(_ relativePath: String) throws -> URL {
-        guard let url = regularFileURL(relativePath) else { throw StoreError.notFound(relativePath) }
-        return url
+        if let url = regularFileURL(relativePath) { return url }
+        // iCloud keeps an evicted file as `.<name>.icloud` next to where the file belongs.
+        if let url = try? fileURL(relativePath), !url.lastPathComponent.isEmpty {
+            let placeholder = url.deletingLastPathComponent().appending(path: ".\(url.lastPathComponent).icloud")
+            if fm.fileExists(atPath: placeholder.path) {
+                onPlaceholder(placeholder)
+                throw StoreError.downloading(relativePath)
+            }
+        }
+        throw StoreError.notFound(relativePath)
     }
 
     func collections() throws -> [CollectionPath] {

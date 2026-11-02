@@ -366,8 +366,35 @@ enum AppModelError: Error, Equatable {
     }
 
     /// nil when the store is unavailable or the file is missing.
+    /// How long `attachmentURL` waits for a file iCloud is still downloading.
+    var downloadTimeout: Duration = .seconds(60)
+
+    /// The attachment's file, waiting while iCloud downloads it; nil when it is gone or never arrives.
     func attachmentURL(_ relativePath: String) async -> URL? {
-        try? await requireStore().attachmentURL(relativePath)
+        let clock = ContinuousClock()
+        let deadline = clock.now + downloadTimeout
+        while true {
+            do {
+                let url = try await requireStore().attachmentURL(relativePath)
+                if Self.isDownloaded(url) { return url }
+            } catch StoreError.downloading {
+                // Requested by the store; wait for it below.
+            } catch {
+                return nil
+            }
+            guard clock.now < deadline, !Task.isCancelled else { return nil }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+    }
+
+    /// False for an iCloud file whose content is not on the device yet, whose download this then requests.
+    nonisolated private static func isDownloaded(_ url: URL) -> Bool {
+        let values = try? url.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey])
+        guard values?.isUbiquitousItem == true, let status = values?.ubiquitousItemDownloadingStatus,
+            status != .current
+        else { return true }
+        try? FileManager.default.startDownloadingUbiquitousItem(at: url)
+        return false
     }
 
     private func requireStore() throws -> any ItemStore {

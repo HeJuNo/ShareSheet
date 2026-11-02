@@ -33,6 +33,8 @@ extension ItemStore {
 
 public enum StoreError: Error, Equatable {
     case notFound(String)
+    /// The file is in iCloud but not on this device yet; its download has been requested.
+    case downloading(String)
     case collectionNotEmpty
     case unavailable
 }

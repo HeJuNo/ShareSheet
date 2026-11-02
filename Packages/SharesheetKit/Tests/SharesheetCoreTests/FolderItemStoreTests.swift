@@ -352,3 +352,16 @@ private func mkdir(_ root: URL, _ path: String) throws {
         await #expect(throws: StoreError.self) { _ = try await store.attachmentURL(path) }
     }
 }
+
+/// iCloud keeps an evicted file as `.<name>.icloud`: the store asks for it and reports it as on its way.
+@Test func attachmentURLOfAnEvictedFileStartsItsDownload() async throws {
+    let requested = Mutex<[URL]>([])
+    let (store, root) = try makeStore(onPlaceholder: { url in requested.withLock { $0.append(url) } })
+    try mkdir(root, "_attachments")
+    try Data().write(to: root.appending(path: "_attachments/.receipt.pdf.icloud"))
+
+    await #expect(throws: StoreError.downloading("_attachments/receipt.pdf")) {
+        _ = try await store.attachmentURL("_attachments/receipt.pdf")
+    }
+    #expect(requested.withLock { $0 }.map(\.lastPathComponent) == [".receipt.pdf.icloud"])
+}

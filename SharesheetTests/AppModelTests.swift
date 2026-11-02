@@ -221,5 +221,36 @@ struct AppModelTests {
         #expect(model.failedCaptureCount == 0)
         #expect(model.pendingCaptureCount == 2)
     }
-}
 
+    /// A file iCloud has not downloaded yet appears once the download lands; the caller waits for it.
+    @Test func attachmentURLWaitsForAnEvictedFile() async throws {
+        let env = try ModelEnv()
+        let model = env.model()
+        await model.refresh()
+        let attachments = env.libraryRoot.appending(path: "_attachments")
+        try FileManager.default.createDirectory(at: attachments, withIntermediateDirectories: true)
+        let placeholder = attachments.appending(path: ".receipt.pdf.icloud")
+        try Data().write(to: placeholder)
+
+        Task {
+            try await Task.sleep(for: .milliseconds(700))
+            try Data("pdf".utf8).write(to: attachments.appending(path: "receipt.pdf"))
+            try FileManager.default.removeItem(at: placeholder)
+        }
+        let url = await model.attachmentURL("_attachments/receipt.pdf")
+
+        #expect(url?.lastPathComponent == "receipt.pdf")
+    }
+
+    @Test func attachmentURLGivesUpOnAFileThatNeverArrives() async throws {
+        let env = try ModelEnv()
+        let model = env.model()
+        model.downloadTimeout = .milliseconds(300)
+        await model.refresh()
+        let attachments = env.libraryRoot.appending(path: "_attachments")
+        try FileManager.default.createDirectory(at: attachments, withIntermediateDirectories: true)
+        try Data().write(to: attachments.appending(path: ".gone.pdf.icloud"))
+
+        #expect(await model.attachmentURL("_attachments/gone.pdf") == nil)
+    }
+}
