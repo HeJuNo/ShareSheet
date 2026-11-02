@@ -11,6 +11,23 @@ struct ScreenshotViewer: View {
     @State private var failed = false
 
     var body: some View {
+        // A system bar keeps the close button legible on any page and the page from running under it.
+        NavigationStack {
+            content
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            dismiss()
+                        } label: {
+                            Label("Close", systemImage: "xmark")
+                        }
+                    }
+                }
+        }
+    }
+
+    private var content: some View {
         GeometryReader { geometry in
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
@@ -39,17 +56,6 @@ struct ScreenshotViewer: View {
             }
         }
         .background(Color(uiColor: .systemBackground))
-        .overlay(alignment: .topTrailing) {
-            Button {
-                dismiss()
-            } label: {
-                Label("Close", systemImage: "xmark.circle.fill")
-                    .labelStyle(.iconOnly)
-                    .font(.title)
-                    .symbolRenderingMode(.hierarchical)
-            }
-            .padding()
-        }
     }
 }
 
