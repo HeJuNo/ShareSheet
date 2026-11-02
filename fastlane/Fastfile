@@ -114,16 +114,27 @@ platform :ios do
     )
 
     def configure_bundle_id(name, identifier, capabilities)
-      bundle_id = Spaceship::ConnectAPI::BundleId.find(identifier) || Spaceship::ConnectAPI::BundleId.create(
-        name:       name,
-        identifier: identifier,
-        platform:   "IOS"
-      )
+      bundle_id = Spaceship::ConnectAPI::BundleId.find(identifier)
+      if bundle_id
+        UI.message("Found bundle ID #{identifier} (#{bundle_id.name}, #{bundle_id.platform}, seed #{bundle_id.seed_id})")
+      else
+        bundle_id = Spaceship::ConnectAPI::BundleId.create(
+          name:       name,
+          identifier: identifier,
+          platform:   "IOS"
+        )
+        UI.success("Created bundle ID #{identifier} (#{bundle_id.name}, seed #{bundle_id.seed_id})")
+      end
       existing = bundle_id.get_capabilities.map(&:capability_type)
+      UI.message("Capabilities of #{identifier}: #{existing.join(', ')}")
       capabilities.reject { |c| existing.include?(c) }.each do |cap|
         bundle_id.create_capability(cap)
+        UI.success("Added #{cap} to #{identifier}")
       end
     end
+
+    UI.message("Team from the TEAMID secret: #{TEAMID == '5H6B8DE8HE' ? 'matches the project team' : 'differs from the project team 5H6B8DE8HE'}")
+    UI.message("Bundle IDs visible to this API key: #{Spaceship::ConnectAPI::BundleId.all.map(&:identifier).sort.join(', ')}")
 
     # The App Group and the iCloud container are assigned to these identifiers in the developer portal.
     configure_bundle_id("Sharesheet", APP_IDENTIFIER, ["APP_GROUPS", "ICLOUD"])
