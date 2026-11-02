@@ -118,10 +118,14 @@ jobs:
         (vars.SCHEDULED_BUILD != 'false' && needs.check_status.outputs.IS_SECOND_IN_MONTH == 'true')
     steps:
       - name: Select Xcode version
-        run: "sudo xcode-select --switch /Applications/Xcode_27.0.app/Contents/Developer"
+        run: |
+          # The newest Xcode 27 installed on the runner
+          XCODE=$(ls -d /Applications/Xcode_27*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select --switch "$XCODE/Contents/Developer"
 
       - name: Checkout Repo for building
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           token: ${{ secrets.GH_PAT }}
 
@@ -178,7 +182,7 @@ jobs:
 
       - name: Upload build log, IPA and Symbol artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: build-artifacts
           path: |

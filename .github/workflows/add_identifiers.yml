@@ -15,7 +15,7 @@ jobs:
     runs-on: xcode-27
     steps:
       - name: Checkout Repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Patch Match Tables
         run: |

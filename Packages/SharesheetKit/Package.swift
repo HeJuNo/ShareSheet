@@ -9,8 +9,8 @@ let package = Package(
         .library(name: "SharesheetUI", targets: ["SharesheetUI"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0"),
-        .package(url: "https://github.com/scinfu/SwiftSoup", from: "2.7.0"),
+        .package(url: "https://github.com/groue/GRDB.swift", from: "7.12.0"),
+        .package(url: "https://github.com/scinfu/SwiftSoup", from: "2.14.3"),
     ],
     targets: [
         .target(

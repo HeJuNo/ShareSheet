@@ -27,7 +27,7 @@ jobs:
 
     steps:
       - name: Checkout Repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Patch Match Tables
         run: |
@@ -91,7 +91,7 @@ jobs:
         run: echo "new_certificate_needed=${{ needs.create_certs.outputs.new_certificate_needed }}"
 
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Install dependencies
         run: bundle install
