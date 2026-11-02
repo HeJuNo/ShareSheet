@@ -66,6 +66,7 @@ final class WebPageCapturer: PageCapturing {
         let window = resolveHostWindow()
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
+        config.userContentController.addUserScript(ConsentBlocker.userScript)
         let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: width, height: viewportHeight), configuration: config)
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         // The scroll edge effect fades the top of every viewport shot, which shows as a pale band at each seam.
@@ -102,6 +103,7 @@ final class WebPageCapturer: PageCapturing {
 
     /// `fitsContent` crops to the body instead of filling at least one screen, for embedded posts on a blank page.
     private func render(_ webView: WKWebView, in window: UIWindow, url: URL, fitsContent: Bool) async throws -> PageSnapshot {
+        _ = try? await webView.evaluateJavaScript(ConsentBlocker.removeNow)
         let fullHeight = try await scrollThrough(webView)
         var height = min(fullHeight, maxHeight)
         if fitsContent, let content = try await contentHeight(webView), content > 0 {

@@ -114,6 +114,25 @@ struct WebPageCapturerTests {
         #expect(snapshot.pngDark == nil)
     }
 
+    /// Cookie banners, their backdrop and the scroll lock they set are gone before the shot; nothing is accepted.
+    @Test func consentBannerIsRemovedBeforeCapture() async throws {
+        let snapshot = try await WebPageCapturer().capture(try fixture("consent-page"))
+
+        let image = try #require(UIImage(data: snapshot.png)?.cgImage)
+        #expect(image.height == (40 + 3000) * 2)
+        for y in [100, 400, 700, 800, 1500, 2900] {
+            let actual = pixel(image, x: 390, y: y * 2)
+            #expect(isClose(actual, to: [0, 255, 0]), "pixel at \(y) pt is \(actual)")
+        }
+        #expect(!snapshot.domHTML.contains("id=\"cookie-banner\""))
+        #expect(!snapshot.domHTML.contains("onetrust-consent-sdk"))
+        #expect(!snapshot.domHTML.contains("id=\"shadow-consent\""))
+        #expect(!snapshot.domHTML.contains("id=\"backdrop\""))
+        // Ordinary content and a sticky header that only mention the words stay.
+        #expect(snapshot.domHTML.contains("id=\"recipe\""))
+        #expect(snapshot.domHTML.contains("id=\"site-header\""))
+    }
+
     /// Colour matching tolerates small differences from colour-space conversion.
     private func isClose(_ rgb: [UInt8], to expected: [UInt8]) -> Bool {
         zip(rgb, expected).allSatisfy { abs(Int($0) - Int($1)) <= 8 }
