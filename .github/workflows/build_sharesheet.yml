@@ -81,7 +81,6 @@ jobs:
           FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
           FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
-          BUNDLE_ID: ${{ vars.BUNDLE_ID }}
 
       - name: Fastlane upload to TestFlight
         run: bundle exec fastlane release
@@ -92,7 +91,6 @@ jobs:
           FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
           FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
-          BUNDLE_ID: ${{ vars.BUNDLE_ID }}
 
       - name: Upload build log, IPA and Symbol artifacts
         if: always()

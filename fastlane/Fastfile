@@ -16,7 +16,7 @@ FASTLANE_ISSUER_ID = ENV["FASTLANE_ISSUER_ID"]
 FASTLANE_KEY = ENV["FASTLANE_KEY"]
 ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] = "120"
 
-APP_IDENTIFIER = ENV["BUNDLE_ID"].to_s.empty? ? "com.#{TEAMID}.Sharesheet" : ENV["BUNDLE_ID"]
+APP_IDENTIFIER = "com.#{TEAMID}.Sharesheet"
 SHARE_IDENTIFIER = "#{APP_IDENTIFIER}.Share"
 
 platform :ios do
@@ -93,8 +93,6 @@ platform :ios do
       output_name: "Sharesheet.ipa",
       configuration: "Release",
       destination: 'generic/platform=iOS',
-      # App Group and iCloud container are derived from this ID.
-      xcargs: "SHARESHEET_APP_ID=#{APP_IDENTIFIER}",
       buildlog_path: 'buildlog'
     )
 
