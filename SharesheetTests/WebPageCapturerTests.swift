@@ -88,7 +88,8 @@ struct WebPageCapturerTests {
 
         let image = try #require(UIImage(data: snapshot.png)?.cgImage)
         #expect(snapshot.finalURL == URL(string: "https://example.com/post"))
-        #expect(image.height == 844 * 2)
+        // As tall as the post, not padded to a full screen.
+        #expect(image.height == 600 * 2)
         let middle = pixel(image, x: 390, y: 600)
         #expect(isClose(middle, to: [0, 0, 255]), "embed pixel \(middle)")
     }

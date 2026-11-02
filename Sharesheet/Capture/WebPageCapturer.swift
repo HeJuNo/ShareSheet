@@ -88,14 +88,21 @@ final class WebPageCapturer: PageCapturing {
         }
         return try await Self.bounded(postLoadBudget) { [self] fail in
             loader.onTerminate = { fail(terminated) }
-            if case .html = source { try await waitForEmbeds(webView) }
-            return try await render(webView, in: window, url: url)
+            if case .html = source {
+                try await waitForEmbeds(webView)
+                return try await render(webView, in: window, url: url, fitsContent: true)
+            }
+            return try await render(webView, in: window, url: url, fitsContent: false)
         }
     }
 
-    private func render(_ webView: WKWebView, in window: UIWindow, url: URL) async throws -> PageSnapshot {
+    /// `fitsContent` crops to the body instead of filling at least one screen, for embedded posts on a blank page.
+    private func render(_ webView: WKWebView, in window: UIWindow, url: URL, fitsContent: Bool) async throws -> PageSnapshot {
         let fullHeight = try await scrollThrough(webView)
-        let height = min(fullHeight, maxHeight)
+        var height = min(fullHeight, maxHeight)
+        if fitsContent, let content = try await contentHeight(webView), content > 0 {
+            height = min(height, content)
+        }
         let screenScale = window.traitCollection.displayScale > 0 ? window.traitCollection.displayScale : UIScreen.main.scale
         let tiles = try await snapshotTiles(webView, height: height, screenScale: screenScale)
         let format = UIGraphicsImageRendererFormat()
@@ -114,6 +121,17 @@ final class WebPageCapturer: PageCapturing {
         return PageSnapshot(
             png: png, domHTML: dom, finalURL: webView.url ?? url,
             iconURL: icon.flatMap { $0.isEmpty ? nil : URL(string: $0) }, truncated: fullHeight > maxHeight)
+    }
+
+    /// The body's height including its margins, rounded up.
+    private func contentHeight(_ webView: WKWebView) async throws -> CGFloat? {
+        let script = """
+            (function () {
+              var b = document.body, s = getComputedStyle(b);
+              return Math.ceil(b.getBoundingClientRect().height + parseFloat(s.marginTop) + parseFloat(s.marginBottom));
+            })()
+            """
+        return (try await webView.evaluateJavaScript(script) as? NSNumber).map { CGFloat($0.doubleValue) }
     }
 
     /// Embed scripts replace the markup with iframes after the page has loaded. Waits until every iframe is
