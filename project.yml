@@ -6,7 +6,7 @@
 name: Sharesheet
 options:
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "26.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -21,7 +21,7 @@ settings:
     SHARESHEET_ICLOUD_CONTAINER: iCloud.$(SHARESHEET_APP_ID)
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
-    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
 packages:
   SharesheetKit:
     path: Packages/SharesheetKit
