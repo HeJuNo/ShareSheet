@@ -137,6 +137,112 @@ import Testing
         _ = try index.search(.init(text: "* - ^ :", scope: .all))
     }
 
+    // MARK: Analysis
+
+    @Test func documentTextIsSearchable() throws {
+        let index = try LibraryIndex(path: tempDB())
+        let item = Item.fixture(id: "Unsorted/A.md", type: .document, url: nil, file: "_attachments/a.pdf", title: "Scan")
+        try index.replaceAll(with: [item])
+        try index.setAnalysis(source: "_attachments/a.pdf", text: "Beitragsvorschreibung Oktober", keywords: [], suggestedTag: nil)
+        #expect(try index.search(.init(text: "vorschreibung", scope: .all)).isEmpty)
+        #expect(ids(try index.search(.init(text: "beitragsvor", scope: .all))) == ["Unsorted/A.md"])
+        try index.replaceAll(with: [item])
+        #expect(ids(try index.search(.init(text: "beitragsvor", scope: .all))) == ["Unsorted/A.md"])
+    }
+
+    @Test func keywordsOutrankBodyText() throws {
+        let index = try LibraryIndex(path: tempDB())
+        try index.replaceAll(with: [
+            .fixture(id: "Unsorted/Old.md", type: .document, url: nil, file: "_attachments/old.pdf", title: "Old", created: date(1)),
+            .fixture(id: "Unsorted/New.md", type: .document, url: nil, file: "_attachments/new.pdf", title: "New", created: date(2)),
+        ])
+        let filler = Array(repeating: "lorem ipsum dolor sit amet", count: 20).joined(separator: " ")
+        try index.setAnalysis(source: "_attachments/new.pdf", text: filler + " steuer", keywords: [], suggestedTag: nil)
+        try index.setAnalysis(
+            source: "_attachments/old.pdf", text: filler, keywords: [Keyword(term: "steuer", score: 1)], suggestedTag: nil)
+        #expect(ids(try index.search(.init(text: "steuer", scope: .all))) == ["Unsorted/Old.md", "Unsorted/New.md"])
+    }
+
+    @Test func candidatesAreItemsWithoutAnalysis() throws {
+        let index = try LibraryIndex(path: tempDB())
+        try index.replaceAll(with: [
+            .fixture(id: "Unsorted/F.md", type: .document, url: nil, file: "_attachments/f.pdf", title: "F"),
+            .fixture(id: "Unsorted/W.md", title: "W", archive: "_attachments/w.html"),
+            .fixture(id: "Unsorted/N.md", title: "N"),
+        ])
+        let all = try index.analysisCandidates()
+        #expect(Set(all.map(\.id.relativePath)) == ["Unsorted/F.md", "Unsorted/W.md"])
+        #expect(all.first { $0.id.relativePath == "Unsorted/F.md" }?.isFile == true)
+        #expect(all.first { $0.id.relativePath == "Unsorted/W.md" }?.source == "_attachments/w.html")
+        try index.setAnalysis(source: "_attachments/f.pdf", text: "x", keywords: [], suggestedTag: nil)
+        try index.setAnalysis(source: "_attachments/w.html", text: nil, keywords: [], suggestedTag: nil)
+        #expect(try index.analysisCandidates().isEmpty)
+        try index.clearAnalysis()
+        #expect(try index.analysisCandidates().count == 2)
+    }
+
+    @Test func suggestedTagCanBeSetAndCleared() throws {
+        let index = try LibraryIndex(path: tempDB())
+        let id = ItemID(relativePath: "Unsorted/F.md")
+        try index.replaceAll(with: [.fixture(id: "Unsorted/F.md", type: .document, url: nil, file: "_attachments/f.pdf", title: "F")])
+        try index.setAnalysis(source: "_attachments/f.pdf", text: "x", keywords: [], suggestedTag: nil)
+        #expect(try index.analysis(forItem: id)?.suggestedTag == nil)
+        try index.setSuggestedTag("Steuer", forSource: "_attachments/f.pdf")
+        #expect(try index.analysis(forItem: id)?.suggestedTag == "Steuer")
+        try index.setSuggestedTag(nil, forSource: "_attachments/f.pdf")
+        #expect(try index.analysis(forItem: id)?.suggestedTag == nil)
+        #expect(try index.analysis(forItem: ItemID(relativePath: "Unsorted/none.md")) == nil)
+    }
+
+    @Test func analysisForItemReturnsKeywordsInScoreOrder() throws {
+        let index = try LibraryIndex(path: tempDB())
+        let id = ItemID(relativePath: "Unsorted/F.md")
+        try index.replaceAll(with: [.fixture(id: "Unsorted/F.md", type: .document, url: nil, file: "_attachments/f.pdf", title: "F")])
+        try index.setAnalysis(
+            source: "_attachments/f.pdf", text: "t",
+            keywords: [Keyword(term: "b", score: 1), Keyword(term: "a", score: 3), Keyword(term: "c", score: 2)],
+            suggestedTag: "T")
+        #expect(try index.analysis(forItem: id)?.keywords.map(\.term) == ["a", "c", "b"])
+        #expect(try index.analysisText(forItem: id) == "t")
+    }
+
+    @Test func analysisTextForWebItemIsArchiveText() throws {
+        let index = try LibraryIndex(path: tempDB())
+        let id = ItemID(relativePath: "Unsorted/W.md")
+        try index.replaceAll(with: [.fixture(id: "Unsorted/W.md", title: "W", archive: "_attachments/w.html")])
+        #expect(try index.analysisText(forItem: id) == nil)
+        try index.setArchiveText("page body", forArchive: "_attachments/w.html")
+        #expect(try index.analysisText(forItem: id) == "page body")
+    }
+
+    @Test func documentFrequenciesCountDocumentsContainingTerms() throws {
+        let index = try LibraryIndex(path: tempDB())
+        try index.replaceAll(with: [
+            .fixture(id: "Unsorted/1.md", type: .document, url: nil, file: "_attachments/1.pdf", title: "1"),
+            .fixture(id: "Unsorted/2.md", type: .document, url: nil, file: "_attachments/2.pdf", title: "2"),
+            .fixture(id: "Unsorted/3.md", title: "3", archive: "_attachments/3.html"),
+            .fixture(id: "Unsorted/4.md", title: "no text"),
+        ])
+        try index.setAnalysis(source: "_attachments/1.pdf", text: "Rechnung Strom", keywords: [], suggestedTag: nil)
+        try index.setAnalysis(source: "_attachments/2.pdf", text: "Vertrag", keywords: [], suggestedTag: nil)
+        try index.setArchiveText("Eine Rechnung online", forArchive: "_attachments/3.html")
+        let result = try index.documentFrequencies(of: ["rechnung", "vertrag", "fehlt"])
+        #expect(result.documents == 3)
+        #expect(result.frequencies["rechnung"] == 2)
+        #expect(result.frequencies["vertrag"] == 1)
+        #expect((result.frequencies["fehlt"] ?? 0) == 0)
+    }
+
+    @Test func searchWithoutTextStaysNewestFirst() throws {
+        let index = try LibraryIndex(path: tempDB())
+        try index.replaceAll(with: [
+            .fixture(id: "Unsorted/1.md", type: .document, url: nil, file: "_attachments/1.pdf", title: "x", created: date(1)),
+            .fixture(id: "Unsorted/2.md", type: .document, url: nil, file: "_attachments/2.pdf", title: "x", created: date(2)),
+        ])
+        try index.setAnalysis(source: "_attachments/1.pdf", text: "x", keywords: [Keyword(term: "x", score: 9)], suggestedTag: nil)
+        #expect(ids(try index.search(.init(scope: .all))) == ["Unsorted/2.md", "Unsorted/1.md"])
+    }
+
     @Test func favicons() throws {
         let index = try LibraryIndex(path: tempDB())
         #expect(try index.favicon(host: "a.b") == nil)

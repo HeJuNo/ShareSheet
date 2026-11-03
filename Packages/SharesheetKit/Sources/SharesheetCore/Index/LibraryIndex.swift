@@ -61,6 +61,28 @@ public struct LibraryCounts: Equatable, Sendable {
     public init() {}
 }
 
+public struct Keyword: Equatable, Hashable, Sendable, Codable {
+    public var term: String
+    public var score: Double
+
+    public init(term: String, score: Double) {
+        self.term = term
+        self.score = score
+    }
+}
+
+/// An item with a file or archive that has not been analysed yet. `source` is the file path, else the archive path.
+public struct AnalysisCandidate: Equatable, Sendable {
+    public var id: ItemID
+    public var source: String
+    public var isFile: Bool
+}
+
+public struct ItemAnalysis: Equatable, Sendable {
+    public var keywords: [Keyword]
+    public var suggestedTag: String?
+}
+
 /// Rebuildable SQLite index of the Markdown library. Written by the app, opened read-only by the share extension.
 public final class LibraryIndex: Sendable {
     private let pool: DatabasePool
@@ -133,6 +155,29 @@ public final class LibraryIndex: Sendable {
                 t.column("archive_text")
             }
         }
+        // Analysis rows are keyed by source path and deliberately not tied to `items`: re-indexing deletes and
+        // re-inserts item rows, and the analysis has to survive that.
+        migrator.registerMigration("v2") { db in
+            try db.create(table: "analysis") { t in
+                t.primaryKey("source", .text)
+                t.column("doc_text", .text).notNull().defaults(to: "")
+                t.column("keywords_json", .text).notNull().defaults(to: "[]")
+                t.column("suggested_tag", .text)
+            }
+            try db.drop(table: "items_fts")
+            try db.create(virtualTable: "items_fts", using: FTS5()) { t in
+                t.tokenizer = .unicode61(diacritics: .remove)
+                t.column("title")
+                t.column("note")
+                t.column("description")
+                t.column("url")
+                t.column("highlights")
+                t.column("archive_text")
+                t.column("doc_text")
+                t.column("keywords")
+            }
+            for key in try Int64.fetchAll(db, sql: "SELECT key FROM items") { try refreshFTS(key: key, db) }
+        }
         return migrator
     }
 
@@ -168,6 +213,32 @@ public final class LibraryIndex: Sendable {
         }
     }
 
+    /// `text` is the extracted document text of a file, nil for an archive (its text lives in `archive_text`).
+    public func setAnalysis(source: String, text: String?, keywords: [Keyword], suggestedTag: String?) throws {
+        let json = String(decoding: try JSONEncoder().encode(keywords), as: UTF8.self)
+        try pool.write { db in
+            try db.execute(sql: """
+                INSERT INTO analysis(source, doc_text, keywords_json, suggested_tag) VALUES (?, ?, ?, ?)
+                ON CONFLICT(source) DO UPDATE SET doc_text = excluded.doc_text,
+                    keywords_json = excluded.keywords_json, suggested_tag = excluded.suggested_tag
+                """, arguments: [source, text ?? "", json, suggestedTag])
+            try Self.refreshFTS(source: source, db)
+        }
+    }
+
+    public func setSuggestedTag(_ tag: String?, forSource source: String) throws {
+        try pool.write { db in
+            try db.execute(sql: "UPDATE analysis SET suggested_tag = ? WHERE source = ?", arguments: [tag, source])
+        }
+    }
+
+    public func clearAnalysis() throws {
+        try pool.write { db in
+            try db.execute(sql: "DELETE FROM analysis")
+            for key in try Int64.fetchAll(db, sql: "SELECT key FROM items") { try Self.refreshFTS(key: key, db) }
+        }
+    }
+
     public func setFavicon(_ data: Data, host: String) throws {
         try pool.write { db in
             try db.execute(
@@ -184,13 +255,82 @@ public final class LibraryIndex: Sendable {
         }
     }
 
+    public func analysisCandidates() throws -> [AnalysisCandidate] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT id, file, archive FROM items
+                WHERE COALESCE(file, archive) IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM analysis WHERE source = COALESCE(items.file, items.archive))
+                ORDER BY created DESC, id
+                """).map { row in
+                let file: String? = row["file"]
+                let archive: String? = row["archive"]
+                return AnalysisCandidate(
+                    id: ItemID(relativePath: row["id"]), source: (file ?? archive)!, isFile: file != nil)
+            }
+        }
+    }
+
+    public func analysis(forItem id: ItemID) throws -> ItemAnalysis? {
+        try pool.read { db in
+            guard let row = try Row.fetchOne(db, sql: """
+                SELECT analysis.keywords_json, analysis.suggested_tag FROM items
+                JOIN analysis ON analysis.source = COALESCE(items.file, items.archive)
+                WHERE items.id = ?
+                """, arguments: [id.relativePath]) else { return nil }
+            let json: String = row["keywords_json"]
+            let keywords = (try? JSONDecoder().decode([Keyword].self, from: Data(json.utf8))) ?? []
+            return ItemAnalysis(
+                keywords: keywords.sorted { $0.score > $1.score }, suggestedTag: row["suggested_tag"])
+        }
+    }
+
+    /// The document text of a file item, or the archive text of a web item.
+    public func analysisText(forItem id: ItemID) throws -> String? {
+        try pool.read { db in
+            guard let row = try Row.fetchOne(
+                db, sql: "SELECT file, archive FROM items WHERE id = ?", arguments: [id.relativePath]) else { return nil }
+            if let file: String = row["file"] {
+                return try String.fetchOne(db, sql: "SELECT doc_text FROM analysis WHERE source = ?", arguments: [file])
+            }
+            if let archive: String = row["archive"] {
+                return try String.fetchOne(db, sql: "SELECT text FROM archive_text WHERE archive = ?", arguments: [archive])
+            }
+            return nil
+        }
+    }
+
+    /// `documents`: items that have an analysis row, archive text or document text; `frequencies[term]`: how many of
+    /// them contain the term in their document text, archive text or title.
+    public func documentFrequencies(of terms: [String]) throws -> (documents: Int, frequencies: [String: Int]) {
+        try pool.read { db in
+            let isDocument = """
+                (EXISTS (SELECT 1 FROM analysis WHERE source = COALESCE(items.file, items.archive))
+                 OR EXISTS (SELECT 1 FROM archive_text WHERE archive = items.archive))
+                """
+            let documents = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM items WHERE \(isDocument)") ?? 0
+            var frequencies: [String: Int] = [:]
+            for term in terms {
+                let cleaned = term.replacingOccurrences(of: "\"", with: "")
+                guard !cleaned.isEmpty else { continue }
+                frequencies[term] = try Int.fetchOne(db, sql: """
+                    SELECT COUNT(*) FROM items JOIN items_fts ON items_fts.rowid = items.key
+                    WHERE items_fts MATCH ? AND \(isDocument)
+                    """, arguments: ["{doc_text archive_text title} : \"\(cleaned)\""]) ?? 0
+            }
+            return (documents, frequencies)
+        }
+    }
+
     public func search(_ query: LibraryQuery) throws -> [IndexedItem] {
         try pool.read { db in
             var sql = "SELECT items.* FROM items"
             var conditions: [String] = []
             var args = StatementArguments()
 
-            if let match = Self.ftsExpression(query.text) {
+            let match = Self.ftsExpression(query.text)
+            let hasText = match != nil
+            if let match {
                 sql += " JOIN items_fts ON items_fts.rowid = items.key"
                 conditions.append("items_fts MATCH ?")
                 args += [match]
@@ -218,7 +358,10 @@ public final class LibraryIndex: Sendable {
                 args += [tag]
             }
             if !conditions.isEmpty { sql += " WHERE " + conditions.joined(separator: " AND ") }
-            sql += " ORDER BY items.created DESC, items.id"
+            // Columns: title, note, description, url, highlights, archive_text, doc_text, keywords.
+            sql += hasText
+                ? " ORDER BY bm25(items_fts, 8, 4, 3, 1, 3, 1, 1, 6), items.created DESC, items.id"
+                : " ORDER BY items.created DESC, items.id"
 
             let rows = try Row.fetchAll(db, sql: sql, arguments: args)
             return try rows.map { row in
@@ -330,12 +473,26 @@ public final class LibraryIndex: Sendable {
 
     private static func refreshFTS(key: Int64, _ db: Database) throws {
         try db.execute(sql: "DELETE FROM items_fts WHERE rowid = ?", arguments: [key])
-        try db.execute(sql: """
-            INSERT INTO items_fts(rowid, title, note, description, url, highlights, archive_text)
-            SELECT items.key, items.title, items.note, COALESCE(items.description, ''), COALESCE(items.url, ''),
-                   items.highlights, COALESCE((SELECT text FROM archive_text WHERE archive = items.archive), '')
-            FROM items WHERE items.key = ?
+        let analysis = try Row.fetchOne(db, sql: """
+            SELECT analysis.doc_text, analysis.keywords_json FROM items
+            JOIN analysis ON analysis.source = COALESCE(items.file, items.archive) WHERE items.key = ?
             """, arguments: [key])
+        let docText: String = analysis?["doc_text"] ?? ""
+        let json: String = analysis?["keywords_json"] ?? "[]"
+        let keywords = ((try? JSONDecoder().decode([Keyword].self, from: Data(json.utf8))) ?? [])
+            .map(\.term).joined(separator: " ")
+        try db.execute(sql: """
+            INSERT INTO items_fts(rowid, title, note, description, url, highlights, archive_text, doc_text, keywords)
+            SELECT items.key, items.title, items.note, COALESCE(items.description, ''), COALESCE(items.url, ''),
+                   items.highlights, COALESCE((SELECT text FROM archive_text WHERE archive = items.archive), ''), ?, ?
+            FROM items WHERE items.key = ?
+            """, arguments: [docText, keywords, key])
+    }
+
+    private static func refreshFTS(source: String, _ db: Database) throws {
+        let keys = try Int64.fetchAll(
+            db, sql: "SELECT key FROM items WHERE COALESCE(file, archive) = ?", arguments: [source])
+        for key in keys { try refreshFTS(key: key, db) }
     }
 
     private static func domain(of url: URL?) -> String? {
