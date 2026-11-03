@@ -115,7 +115,7 @@ private func file(_ name: String, type: UTType = .jpeg) -> SharedInput {
         #expect(!["request.json", "progress.json", "preview.jpg"].contains(name))
     }
     for (index, input) in inputs.enumerated() {
-        guard case .file(let source, _, _) = input else { Issue.record("not a file"); continue }
+        guard case .file(let source, _, _, _) = input else { Issue.record("not a file"); continue }
         #expect(files[names[index]] == source)
     }
     #expect(req.entries.map(\.type) == [.image, .image, .image, .image, .image, .document])
@@ -173,4 +173,33 @@ private func file(_ name: String, type: UTType = .jpeg) -> SharedInput {
     let multi = ShareRequestBuilder.initialState(for: [input, file("a.jpg")], existing: nil, now: t0)
     let (multiReq, _) = ShareRequestBuilder.request(from: multi, initial: multi, inputs: [input, file("a.jpg")], existing: nil, id: id0, now: t0)
     #expect(multiReq.entries[0].description == "About it")
+}
+
+@Test func normalizedDropsBrowserOnlyAddresses() {
+    let blob = SharedInput.url(URL(string: "blob:https://example.com/53946572-b1")!, pageTitle: nil, selection: nil)
+    let result = ShareRequestBuilder.normalized([file("Rechnung.pdf", type: .pdf), blob])
+    #expect(result.inputs.count == 1)
+    guard case .file(_, _, let name, let source) = result.inputs.first else { Issue.record("not a file"); return }
+    #expect(name == "Rechnung.pdf" && source == nil)
+}
+
+@Test func singleFileWithOneLinkKeepsTheLinkAsItsSource() {
+    let link = SharedInput.url(URL(string: "https://example.com/docs/sample.pdf?utm_source=x")!, pageTitle: nil, selection: nil)
+    let inputs = ShareRequestBuilder.normalized([file("sample.pdf", type: .pdf), link]).inputs
+    #expect(inputs.count == 1)
+    guard case .file(_, _, _, let source) = inputs.first else { Issue.record("not a file"); return }
+    #expect(source?.absoluteString == "https://example.com/docs/sample.pdf")
+
+    let s = ShareRequestBuilder.initialState(for: inputs, existing: nil, now: t0)
+    #expect(s.type == .document && s.title == "sample" && s.url == source)
+    let (req, files) = ShareRequestBuilder.request(from: s, initial: s, inputs: inputs, existing: nil, id: id0, now: t0)
+    #expect(req.entries.count == 1 && req.entries[0].fileName == "sample.pdf" && req.entries[0].url == source)
+    #expect(files["sample.pdf"] != nil)
+}
+
+@Test func filesWithSeveralLinksStaySeparate() {
+    let a = SharedInput.url(URL(string: "https://example.com/a")!, pageTitle: nil, selection: nil)
+    let b = SharedInput.url(URL(string: "https://example.com/b")!, pageTitle: nil, selection: nil)
+    #expect(ShareRequestBuilder.normalized([file("a.jpg"), a, b]).inputs.count == 3)
+    #expect(ShareRequestBuilder.normalized([file("a.jpg"), file("b.jpg"), a]).inputs.count == 3)
 }

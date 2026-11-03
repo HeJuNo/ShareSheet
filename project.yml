@@ -44,6 +44,8 @@ targets:
         product: SharesheetUI
       - target: SharesheetShare
         embed: true
+      - target: SharesheetSharePDF
+        embed: true
     entitlements:
       path: Sharesheet/Sharesheet.entitlements
       properties:
@@ -124,10 +126,58 @@ targets:
                 ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.movie" OR
                 ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audio" OR
                 ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.data"
-              ).@count >= 1).@count >= 1
+              ).@count >= 1 AND SUBQUERY($e.attachments, $p,
+                ANY $p.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf"
+              ).@count == 0).@count >= 1
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(SHARESHEET_APP_ID).Share
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+  # The same share sheet for PDFs, without the preprocessing script: Safari hands an extension with a script only
+  # the script's results, and on a PDF the script never runs. The two rules never match the same share.
+  SharesheetSharePDF:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: SharesheetShare
+        excludes:
+          - Preprocess.js
+          - Info.plist
+          - SharesheetShare.entitlements
+      - path: Sharesheet/Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    dependencies:
+      - package: SharesheetKit
+        product: SharesheetCore
+      - package: SharesheetKit
+        product: SharesheetUI
+    entitlements:
+      path: SharesheetSharePDF/SharesheetSharePDF.entitlements
+      properties:
+        com.apple.security.application-groups: [$(SHARESHEET_APP_GROUP)]
+        com.apple.developer.icloud-container-identifiers: [$(SHARESHEET_ICLOUD_CONTAINER)]
+        com.apple.developer.ubiquity-container-identifiers: [$(SHARESHEET_ICLOUD_CONTAINER)]
+        com.apple.developer.icloud-services: [CloudDocuments]
+    info:
+      path: SharesheetSharePDF/Info.plist
+      properties:
+        CFBundleDisplayName: Sharesheet
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        SharesheetAppGroup: $(SHARESHEET_APP_GROUP)
+        SharesheetICloudContainer: $(SHARESHEET_ICLOUD_CONTAINER)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule: |-
+              SUBQUERY(extensionItems, $e, SUBQUERY($e.attachments, $a,
+                ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf"
+              ).@count >= 1).@count >= 1
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(SHARESHEET_APP_ID).SharePDF
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
   SharesheetTests:
@@ -169,6 +219,7 @@ schemes:
       targets:
         Sharesheet: all
         SharesheetShare: all
+        SharesheetSharePDF: all
         SharesheetTests: [test]
     test:
       targets:

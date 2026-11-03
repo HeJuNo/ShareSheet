@@ -19,9 +19,12 @@ ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] = "120"
 # Bundle-ID: Repository-Variable BUNDLE_ID oder com.<TEAMID>.Sharesheet
 BUNDLE_ID = (ENV["BUNDLE_ID"].to_s.strip.empty? ? "com.#{TEAMID}.Sharesheet" : ENV["BUNDLE_ID"].strip)
 SHARE_BUNDLE_ID = "#{BUNDLE_ID}.Share"
+# A second share extension for PDFs, which Safari never hands to the one with the preprocessing script.
+SHARE_PDF_BUNDLE_ID = "#{BUNDLE_ID}.SharePDF"
 APP_NAME  = "Sharesheet"
 TARGET    = "Sharesheet"
 SHARE_TARGET = "SharesheetShare"
+SHARE_PDF_TARGET = "SharesheetSharePDF"
 PROJECT   = "#{GITHUB_WORKSPACE}/Sharesheet.xcodeproj"
 
 platform :ios do
@@ -56,7 +59,7 @@ platform :ios do
     match(
       type: "appstore",
       git_basic_authorization: Base64.strict_encode64("#{GITHUB_REPOSITORY_OWNER}:#{GH_PAT}"),
-      app_identifier: [BUNDLE_ID, SHARE_BUNDLE_ID]
+      app_identifier: [BUNDLE_ID, SHARE_BUNDLE_ID, SHARE_PDF_BUNDLE_ID]
     )
 
     mapping = Actions.lane_context[
@@ -79,6 +82,14 @@ platform :ios do
       targets: [SHARE_TARGET]
     )
 
+    update_code_signing_settings(
+      path: PROJECT,
+      profile_name: mapping[SHARE_PDF_BUNDLE_ID],
+      code_sign_identity: "iPhone Distribution",
+      bundle_identifier: SHARE_PDF_BUNDLE_ID,
+      targets: [SHARE_PDF_TARGET]
+    )
+
     update_app_identifier(
       xcodeproj: PROJECT,
       plist_path: "Sharesheet/Info.plist",
@@ -89,6 +100,12 @@ platform :ios do
       xcodeproj: PROJECT,
       plist_path: "SharesheetShare/Info.plist",
       app_identifier: SHARE_BUNDLE_ID
+    )
+
+    update_app_identifier(
+      xcodeproj: PROJECT,
+      plist_path: "SharesheetSharePDF/Info.plist",
+      app_identifier: SHARE_PDF_BUNDLE_ID
     )
 
     gym(
@@ -150,9 +167,10 @@ platform :ios do
       end
     end
 
-    # App and share extension share an App Group and an iCloud container.
+    # App and share extensions share an App Group and an iCloud container.
     configure_bundle_id(APP_NAME, BUNDLE_ID, ["APP_GROUPS", "ICLOUD"])
     configure_bundle_id("#{APP_NAME} Share", SHARE_BUNDLE_ID, ["APP_GROUPS", "ICLOUD"])
+    configure_bundle_id("#{APP_NAME} Share PDF", SHARE_PDF_BUNDLE_ID, ["APP_GROUPS", "ICLOUD"])
   end
 
   desc "Provision Certificates"
@@ -171,7 +189,7 @@ platform :ios do
       force: false,
       verbose: true,
       git_basic_authorization: Base64.strict_encode64("#{GITHUB_REPOSITORY_OWNER}:#{GH_PAT}"),
-      app_identifier: [BUNDLE_ID, SHARE_BUNDLE_ID]
+      app_identifier: [BUNDLE_ID, SHARE_BUNDLE_ID, SHARE_PDF_BUNDLE_ID]
     )
   end
 
@@ -192,6 +210,7 @@ platform :ios do
 
     find_bundle_id(BUNDLE_ID)
     find_bundle_id(SHARE_BUNDLE_ID)
+    find_bundle_id(SHARE_PDF_BUNDLE_ID)
 
     match(
       type: "appstore",

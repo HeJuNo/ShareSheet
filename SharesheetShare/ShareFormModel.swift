@@ -154,7 +154,7 @@ final class ShareFormModel {
                     self.thumbnail = UIImage(contentsOfFile: imageURL.path)
                 }
             }
-        case .file(let url, _, _):
+        case .file(let url, _, _, _):
             previewTask = Task { [weak self] in
                 let image = await Self.fileThumbnail(url)
                 self?.thumbnail = image

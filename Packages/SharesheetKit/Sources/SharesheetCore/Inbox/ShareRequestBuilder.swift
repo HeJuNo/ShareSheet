@@ -5,8 +5,8 @@ import UniformTypeIdentifiers
 public enum SharedInput: Sendable {
     case url(URL, pageTitle: String?, selection: String?, description: String? = nil)
     case text(String)
-    /// A local copy of a shared file; `name` is the original file name.
-    case file(URL, contentType: UTType, name: String)
+    /// A local copy of a shared file; `name` is the original file name, `source` the web address it came from.
+    case file(URL, contentType: UTType, name: String, source: URL? = nil)
 }
 
 /// What the share sheet shows and edits.
@@ -51,10 +51,21 @@ public enum ShareRequestBuilder {
     /// Collapses the redundant attachments apps send with a link: the same URL twice (compared after
     /// cleaning) is kept once, and text sent along with links (and no files) is not an item of its own:
     /// it becomes the title of a single untitled link, otherwise it is returned as `note`.
-    /// Several distinct links, or files, are kept as they are.
+    /// Several distinct links, or files, are kept as they are. Addresses only the sending browser can open
+    /// (`blob:`, `data:`) are dropped, and a single file sent with a single link keeps the link as its source:
+    /// Safari sends a PDF it shows together with its address.
     public static func normalized(_ inputs: [SharedInput]) -> (inputs: [SharedInput], note: String?) {
         var result: [SharedInput] = []
         var seen: [URL: Int] = [:]
+        let inputs = inputs.filter { input in
+            guard case .url(let url, _, _, _) = input else { return true }
+            return !["blob", "data"].contains(url.scheme?.lowercased() ?? "")
+        }
+        if inputs.count == 2, let fileIndex = inputs.firstIndex(where: { if case .file = $0 { true } else { false } }),
+           case .file(let local, let contentType, let name, nil) = inputs[fileIndex],
+           case .url(let url, _, _, _) = inputs[1 - fileIndex], url.isWebPage {
+            return ([.file(local, contentType: contentType, name: name, source: URLCleaner.clean(url))], nil)
+        }
         for input in inputs {
             guard case .url(let url, let pageTitle, let selection, let description) = input else {
                 result.append(input)
@@ -106,8 +117,8 @@ public enum ShareRequestBuilder {
                 description: nonBlank(description), highlight: nonBlank(selection), url: cleaned)
         case .text(let text):
             state = SheetState(type: .text, title: firstLine(text))
-        case .file(_, let contentType, let name):
-            state = SheetState(type: ItemType.preset(forContentType: contentType), title: stem(name))
+        case .file(_, let contentType, let name, let source):
+            state = SheetState(type: ItemType.preset(forContentType: contentType), title: stem(name), url: source)
         case nil:
             state = SheetState(type: .link, title: "")
         }
@@ -141,10 +152,10 @@ public enum ShareRequestBuilder {
             case .text(let text):
                 entry.url = nil
                 entry.content = text
-            case .file(let source, let contentType, let name):
+            case .file(let local, let contentType, let name, let source):
                 let fileName = inboxName(for: name, contentType: contentType, taken: &taken)
-                files[fileName] = source
-                entry.url = nil
+                files[fileName] = local
+                entry.url = source
                 entry.fileName = fileName
             case .url, nil:
                 entry.highlight = state.highlight
@@ -166,12 +177,12 @@ public enum ShareRequestBuilder {
                         description: nonBlank(description), highlight: nonBlank(selection)))
                 case .text(let text):
                     entries.append(ShareEntry(type: typeOverride ?? .text, title: firstLine(text), content: text))
-                case .file(let source, let contentType, let name):
+                case .file(let local, let contentType, let name, let source):
                     let fileName = inboxName(for: name, contentType: contentType, taken: &taken)
-                    files[fileName] = source
+                    files[fileName] = local
                     entries.append(ShareEntry(
                         type: typeOverride ?? ItemType.preset(forContentType: contentType),
-                        title: stem(name), fileName: fileName))
+                        url: source, title: stem(name), fileName: fileName))
                 }
             }
         }
@@ -205,7 +216,7 @@ public enum ShareRequestBuilder {
         switch input {
         case .url(let url, _, _, _): ItemType.preset(for: URLCleaner.clean(url))
         case .text: .text
-        case .file(_, let contentType, _): ItemType.preset(forContentType: contentType)
+        case .file(_, let contentType, _, _): ItemType.preset(forContentType: contentType)
         }
     }
 
