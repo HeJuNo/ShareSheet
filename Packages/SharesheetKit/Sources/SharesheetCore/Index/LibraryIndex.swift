@@ -107,7 +107,7 @@ public final class LibraryIndex: Sendable {
         NotificationCenter.default.post(name: Database.resumeNotification, object: nil)
     }
 
-    private static var migrator: DatabaseMigrator {
+    static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { db in
             try db.create(table: "items") { t in

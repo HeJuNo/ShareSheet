@@ -21,6 +21,8 @@ let package = Package(
             ]
         ),
         .target(name: "SharesheetUI", dependencies: ["SharesheetCore"]),
-        .testTarget(name: "SharesheetCoreTests", dependencies: ["SharesheetCore"]),
+        .testTarget(
+            name: "SharesheetCoreTests",
+            dependencies: ["SharesheetCore", .product(name: "GRDB", package: "GRDB.swift")]),
     ]
 )

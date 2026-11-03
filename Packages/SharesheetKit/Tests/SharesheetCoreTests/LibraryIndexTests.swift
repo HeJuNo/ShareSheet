@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import Testing
 @testable import SharesheetCore
 
@@ -241,6 +242,42 @@ import Testing
         ])
         try index.setAnalysis(source: "_attachments/1.pdf", text: "x", keywords: [Keyword(term: "x", score: 9)], suggestedTag: nil)
         #expect(ids(try index.search(.init(scope: .all))) == ["Unsorted/2.md", "Unsorted/1.md"])
+    }
+
+    @Test func migrationV2RepopulatesExistingIndex() throws {
+        let path = tempDB()
+        // A database as an app before this version left it: schema v1 only, filled with a plain FTS insert.
+        do {
+            let pool = try DatabasePool(path: path.path)
+            try LibraryIndex.migrator.migrate(pool, upTo: "v1")
+            try pool.write { db in
+                let rows: [(String, String, String?, String?)] = [
+                    ("Unsorted/F.md", "Scan", "_attachments/f.pdf", nil),
+                    ("Unsorted/W.md", "Web page", nil, "_attachments/w.html"),
+                    ("Unsorted/P.md", "Plain router note", nil, nil),
+                ]
+                for (id, title, file, archive) in rows {
+                    try db.execute(sql: """
+                        INSERT INTO items(id, type, title, file, created, favorite, has_highlights, collection, note,
+                                          highlights, archive)
+                        VALUES (?, 'link', ?, ?, 0, 0, 0, 'Unsorted', '', '', ?)
+                        """, arguments: [id, title, file, archive])
+                    try db.execute(sql: """
+                        INSERT INTO items_fts(rowid, title, note, description, url, highlights, archive_text)
+                        VALUES (?, ?, '', '', '', '', ?)
+                        """, arguments: [db.lastInsertedRowID, title, archive == nil ? "" : "deep internals"])
+                }
+                try db.execute(sql: "INSERT INTO archive_text(archive, text) VALUES ('_attachments/w.html', 'deep internals')")
+            }
+        }
+        let index = try LibraryIndex(path: path)
+        #expect(ids(try index.search(.init(text: "router", scope: .all))) == ["Unsorted/P.md"])
+        #expect(ids(try index.search(.init(text: "inter", scope: .all))) == ["Unsorted/W.md"])
+        #expect(ids(try index.search(.init(text: "sca", scope: .all))) == ["Unsorted/F.md"])
+        #expect(try index.search(.init(scope: .all)).count == 3)
+        try index.setAnalysis(source: "_attachments/f.pdf", text: "Beitragsvorschreibung", keywords: [], suggestedTag: nil)
+        #expect(ids(try index.search(.init(text: "beitragsvor", scope: .all))) == ["Unsorted/F.md"])
+        #expect(try index.analysisCandidates().map(\.source) == ["_attachments/w.html"])
     }
 
     @Test func favicons() throws {
