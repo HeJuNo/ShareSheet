@@ -126,16 +126,17 @@ targets:
                 ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.movie" OR
                 ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audio" OR
                 ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.data"
-              ).@count >= 1 AND SUBQUERY($e.attachments, $p,
+              ).@count >= 1).@count >= 1 AND SUBQUERY(extensionItems, $f, SUBQUERY($f.attachments, $p,
                 ANY $p.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf"
-              ).@count == 0).@count >= 1
+              ).@count >= 1).@count == 0
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(SHARESHEET_APP_ID).Share
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
   # The same share sheet for PDFs, without the preprocessing script: Safari hands an extension with a script only
-  # the script's results, and on a PDF the script never runs. The two rules never match the same share.
+  # the script's results, and on a PDF the script never runs. The two rules never match the same share: a PDF in any
+  # item of a share excludes the main extension, since Safari may send the page address as an item of its own.
   SharesheetSharePDF:
     type: app-extension
     platform: iOS

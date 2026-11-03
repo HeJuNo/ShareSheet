@@ -25,8 +25,13 @@ struct ShareExtensionRuleTests {
     }()
 
     private func offered(_ types: [[String]]) -> [String] {
-        let items = ["extensionItems": [["attachments": types.map { ["registeredTypeIdentifiers": $0] }]]]
-        return extensions.filter { $0.rule.evaluate(with: items) }.map(\.name)
+        offered(items: [types])
+    }
+
+    /// One entry per extension item, each with its attachments' types.
+    private func offered(items: [[[String]]]) -> [String] {
+        let share = ["extensionItems": items.map { ["attachments": $0.map { ["registeredTypeIdentifiers": $0] }] }]
+        return extensions.filter { $0.rule.evaluate(with: share) }.map(\.name)
     }
 
     @Test func bothExtensionsAreEmbedded() {
@@ -45,6 +50,8 @@ struct ShareExtensionRuleTests {
         #expect(offered([["com.adobe.pdf"], ["public.url"]]) == ["SharesheetSharePDF"])
         // A PDF from Files or Mail.
         #expect(offered([["com.adobe.pdf", "public.file-url"]]) == ["SharesheetSharePDF"])
+        // The page address and the document as separate items.
+        #expect(offered(items: [[["public.url"]], [["com.adobe.pdf"]]]) == ["SharesheetSharePDF"])
     }
 
     @Test func otherFilesStayWithTheMainExtension() {
