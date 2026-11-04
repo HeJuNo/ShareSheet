@@ -20,4 +20,20 @@ struct DocumentTaggingTests {
         #expect(instructions.contains("existing tag"))
         #expect(instructions.contains("language of the document"))
     }
+
+    @Test func largeTagLibraryIsCappedToTheBudgetInOrderWithoutPartialNames() {
+        let tags = (1...500).map { "Tag\($0)" }
+        let listed = TagPrompt.listedTags(tags)
+        #expect(listed.joined(separator: ", ").count <= TagPrompt.maxTagListCharacters)
+        #expect(listed.count < tags.count)
+        #expect(listed == Array(tags.prefix(listed.count)))
+        let instructions = TagPrompt.instructions(existingTags: tags)
+        #expect(instructions.contains("Existing tags: " + listed.joined(separator: ", ") + "."))
+        #expect(!instructions.contains(tags[listed.count]))
+    }
+
+    @Test func smallTagListIsListedCompletelyAndEmptyNamesAreSkipped() {
+        let instructions = TagPrompt.instructions(existingTags: ["Rechnung", "", "Vertrag"])
+        #expect(instructions.contains("Existing tags: Rechnung, Vertrag."))
+    }
 }
