@@ -1,5 +1,5 @@
 {
-  "originHash" : "483b53a5b36db7da38c10cdb73f3a5b6fbf4d152e68dcbb97ffd9a02fead56e3",
+  "originHash" : "b47d719156b40ec0bba3c47349bf1e187c4f1d3235d57677c64a7c9a93c3b730",
   "pins" : [
     {
       "identity" : "grdb.swift",
@@ -17,6 +17,15 @@
       "state" : {
         "revision" : "e7f85f4d3dd91ca9a1e94d3328aa1ed5120a8c0f",
         "version" : "2.14.3"
+      }
+    },
+    {
+      "identity" : "zen-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/gorules/zen-ios",
+      "state" : {
+        "revision" : "898dc18218884a2659391c0e3681b8c69b9d2061",
+        "version" : "2.1.2"
       }
     }
   ],

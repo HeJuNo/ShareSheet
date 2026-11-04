@@ -25,6 +25,9 @@ settings:
 packages:
   SharesheetKit:
     path: Packages/SharesheetKit
+  ZenUniffi:
+    url: https://github.com/gorules/zen-ios
+    from: "2.0.0"
 targets:
   Sharesheet:
     type: application
@@ -42,6 +45,8 @@ targets:
         product: SharesheetCore
       - package: SharesheetKit
         product: SharesheetUI
+      - package: ZenUniffi
+        product: ZenUniffi
       - target: SharesheetShare
         embed: true
       - target: SharesheetSharePDF
@@ -208,6 +213,8 @@ targets:
         buildPhase: resources
     dependencies:
       - target: Sharesheet
+      - package: ZenUniffi
+        product: ZenUniffi
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(SHARESHEET_APP_ID).Tests
