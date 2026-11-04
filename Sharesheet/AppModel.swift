@@ -65,6 +65,9 @@ enum AnalysisSettings {
     @ObservationIgnored private let analyzer: DocumentAnalyzer?
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let isForeground: @Sendable () async -> Bool
+    /// Where rules moved items to; the detail screen still holds the id from before.
+    @ObservationIgnored private let redirects: MoveRedirects
+    let rulesStatus: RulesStatus
     @ObservationIgnored private var analysisTask: Task<Void, Never>?
     @ObservationIgnored private var analysisRequested = false
     @ObservationIgnored private var faviconCache: [String: Data?] = [:]
@@ -74,8 +77,11 @@ enum AnalysisSettings {
         storeFactory: @escaping () async -> (any ItemStore)?, index: LibraryIndex, inbox: Inbox,
         runner: CaptureRunner?, extensionTemporaryRoot: URL? = nil,
         analyzer: DocumentAnalyzer? = nil, defaults: UserDefaults = .standard,
-        isForeground: @escaping @Sendable () async -> Bool = { true }
+        isForeground: @escaping @Sendable () async -> Bool = { true },
+        redirects: MoveRedirects = MoveRedirects(), rulesStatus: RulesStatus = RulesStatus()
     ) {
+        self.redirects = redirects
+        self.rulesStatus = rulesStatus
         self.isForeground = isForeground
         self.analyzer = analyzer
         self.defaults = defaults
@@ -391,7 +397,7 @@ enum AnalysisSettings {
     }
 
     func loadItem(_ id: ItemID) async throws -> Item {
-        try await requireStore().item(id)
+        try await requireStore().item(redirects.current(id))
     }
 
     /// Writes the user-editable fields (title, note, tags, favorite) of `item` onto its file in one store
@@ -401,7 +407,7 @@ enum AnalysisSettings {
         let saved: Item
         do {
             let (title, note, tags, favorite) = (item.title, item.note, item.tags, item.favorite)
-            saved = try await store.modify(item.id) {
+            saved = try await store.modify(redirects.current(item.id)) {
                 $0.title = title
                 $0.note = note
                 $0.tags = tags
@@ -418,6 +424,7 @@ enum AnalysisSettings {
 
     /// Returns the item's new id.
     func move(_ id: ItemID, to collection: CollectionPath) async throws -> ItemID {
+        let id = redirects.current(id)
         let store = try requireStore()
         let moved: Item
         do {
@@ -433,6 +440,7 @@ enum AnalysisSettings {
     }
 
     func delete(_ id: ItemID) async throws {
+        let id = redirects.current(id)
         let store = try requireStore()
         // A new file may take over the freed name, so the analysis of the old one must not outlive it.
         let gone = try? await store.item(id)
@@ -489,7 +497,7 @@ enum AnalysisSettings {
 
     /// Captures the item now (Retry or Capture now), whatever its capture state.
     func retryCapture(_ id: ItemID) async {
-        await runner?.capture(id)
+        await runner?.capture(redirects.current(id))
         reloadFromIndex()
     }
 
@@ -561,16 +569,13 @@ extension AppModel {
 
     /// The rules from `rules.json` in the library, read fresh for every item; nil when the ZEN engine cannot start.
     /// A missing or broken file means no rules.
-    private static func liveRules(library: ICloudLibrary, index: LibraryIndex) -> (any RuleApplying)? {
+    private static func liveRules(
+        library: ICloudLibrary, index: LibraryIndex, redirects: MoveRedirects, status: RulesStatus
+    ) -> (any RuleApplying)? {
         guard let engine = try? RuleEngine() else { return nil }
         return RuleApplier(
-            store: ResolvingItemStore(library: library), index: index,
-            rules: {
-                guard let root = await ICloudLocator.libraryRoot(), case .rules(let set) = RuleFile.load(from: root) else {
-                    return .empty
-                }
-                return set
-            },
+            store: ResolvingItemStore(library: library), index: index, redirects: redirects,
+            rules: { await RulesLoading.load(root: await ICloudLocator.libraryRoot(), status: status) },
             evaluate: { set, item, text in try await engine.outcome(for: set, item: item, text: text) })
     }
 
@@ -580,7 +585,9 @@ extension AppModel {
         let fm = FileManager.default
         let inbox = Inbox(root: AppGroup.inboxURL() ?? fm.temporaryDirectory.appending(path: "Inbox"))
         let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first ?? fm.temporaryDirectory
-        let rules = liveRules(library: library, index: index)
+        let redirects = MoveRedirects()
+        let rulesStatus = RulesStatus()
+        let rules = liveRules(library: library, index: index, redirects: redirects, status: rulesStatus)
         let runner = CaptureRunner(
             store: ResolvingItemStore(library: library), index: index, capturer: WebPageCapturer(),
             archiver: HTMLArchiver(fetcher: URLSessionFetcher()), favicons: FaviconFetcher(),
@@ -594,7 +601,8 @@ extension AppModel {
         return AppModel(
             storeFactory: { await library.resolve() }, index: index, inbox: inbox, runner: runner,
             extensionTemporaryRoot: AppGroup.containerURL()?.appending(path: "Tmp", directoryHint: .isDirectory),
-            analyzer: analyzer, isForeground: { await UIApplication.shared.applicationState == .active })
+            analyzer: analyzer, isForeground: { await UIApplication.shared.applicationState == .active },
+            redirects: redirects, rulesStatus: rulesStatus)
     }
 
     /// The App Group index the share extension reads; a private fallback when the group is missing.

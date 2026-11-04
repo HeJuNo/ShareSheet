@@ -5,6 +5,37 @@ import SharesheetCore
 
 @MainActor
 struct AppModelEditingTests {
+    @Test func anItemMovedByARuleIsStillReachableByItsOldID() async throws {
+        let env = try ModelEnv()
+        let created = try await env.store.create(ItemDraft(type: .text, title: "Receipt"), in: .unsorted)
+        let redirects = MoveRedirects()
+        let model = env.model(redirects: redirects)
+        await model.refresh()
+        let moved = try await env.store.move(created.id, to: CollectionPath(components: ["Tech"]))
+        redirects.record(from: created.id, to: moved.id)
+
+        var item = try await model.loadItem(created.id)
+        #expect(item.id == moved.id)
+        item.note = "edited"
+        let saved = try await model.save(Item(id: created.id, type: item.type, title: item.title, tags: ["x"], created: item.created, note: "edited"))
+        #expect(saved.id == moved.id && saved.note == "edited")
+        let again = try await model.move(created.id, to: CollectionPath(components: ["Other"]))
+        #expect(again.collection == CollectionPath(components: ["Other"]))
+        try await model.delete(again)  // after its own move the screen uses the id it got back
+        #expect(try await env.store.listItems().isEmpty)
+    }
+
+    @Test func redirectsFollowSeveralMovesAndStopAtLoops() {
+        let redirects = MoveRedirects()
+        let a = ItemID(relativePath: "A/1.md"), b = ItemID(relativePath: "B/1.md"), c = ItemID(relativePath: "C/1.md")
+        redirects.record(from: a, to: b)
+        redirects.record(from: b, to: c)
+        #expect(redirects.current(a) == c)
+        redirects.record(from: c, to: a)  // a loop must not hang
+        _ = redirects.current(a)
+        #expect(redirects.current(ItemID(relativePath: "Z/9.md")) == ItemID(relativePath: "Z/9.md"))
+    }
+
     @Test func editingTagsWritesFileAndIndex() async throws {
         let env = try ModelEnv()
         let created = try await env.store.create(ItemDraft(type: .text, title: "Receipt"), in: .unsorted)

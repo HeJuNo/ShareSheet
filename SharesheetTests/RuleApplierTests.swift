@@ -17,12 +17,12 @@ struct RuleApplierTests {
     private let svs = [RuleCondition(field: .text, op: .contains, value: "svs"), RuleCondition(field: .text, op: .contains, value: "kontoauszug")]
 
     private func applier(
-        _ env: ModelEnv, _ rules: [Rule], evaluate: RuleApplier.Evaluate? = nil
+        _ env: ModelEnv, _ rules: [Rule], redirects: MoveRedirects? = nil, evaluate: RuleApplier.Evaluate? = nil
     ) throws -> RuleApplier {
         let engine = try RuleEngine()
         let set = RuleSet(rules: rules)
         return RuleApplier(
-            store: env.store, index: env.index, rules: { set },
+            store: env.store, index: env.index, redirects: redirects, rules: { set },
             evaluate: evaluate ?? { set, item, text in try await engine.outcome(for: set, item: item, text: text) })
     }
 
@@ -66,6 +66,41 @@ struct RuleApplierTests {
         let all = try await env.store.listItems()
         #expect(all.count == 1 && all[0].id.collection == CollectionPath(components: ["Sozialversicherung"]))
         #expect(try ids(env) == [all[0].id.relativePath])
+    }
+
+    @Test func aMoveIsRecordedSoOpenScreensCanFollow() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: "SVS Kontoauszug")
+        let redirects = MoveRedirects()
+        await (try applier(env, [rule(svs, [.moveTo("Sozialversicherung")])], redirects: redirects)).apply(to: item.id)
+        let moved = try #require(try await env.store.listItems().first)
+        #expect(moved.id != item.id)
+        #expect(redirects.current(item.id) == moved.id)
+    }
+
+    @Test func tagNameLimitsAreCheckedSeparately() async throws {
+        let env = try ModelEnv()
+        let item = try await addLink(env)
+        let over40 = String(repeating: "a", count: 41)
+        let fourWords = "eins zwei drei vier"
+        await (try applier(env, [rule(apple, [.addTag(over40), .addTag(fourWords), .addTag("drei kurze wörter")])])).apply(to: item.id)
+        #expect(try await env.store.item(item.id).tags == ["drei kurze wörter"])
+    }
+
+    @Test func aFailingRunDoesNotHoldBackTheNextItem() async throws {
+        let env = try ModelEnv()
+        let first = try await addLink(env, "https://apple.com/a")
+        let second = try await addLink(env, "https://apple.com/b")
+        let engine = try RuleEngine()
+        let failFirst = first.id
+        let applier = try applier(env, [rule(apple, [.addTag("apple")])]) { set, item, text in
+            if item.id == failFirst { throw EvaluationError() }
+            return try await engine.outcome(for: set, item: item, text: text)
+        }
+        await applier.apply(to: first.id)
+        await applier.apply(to: second.id)
+        #expect(try await env.store.item(first.id).tags.isEmpty)
+        #expect(try await env.store.item(second.id).tags == ["apple"])
     }
 
     @Test func movingTwiceDoesNotCreateASecondCollection() async throws {

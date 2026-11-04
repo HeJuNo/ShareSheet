@@ -67,6 +67,14 @@ struct SettingsView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
+                    if let problem = model.rulesStatus.problem {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("The rules file is invalid, so no rules are applied.")
+                            Text(verbatim: problem)
+                        }
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                    }
                     Button("Analyze all again") { confirmsAnalyzeAgain = true }
                         .disabled(!analyzeDocuments || !model.isICloudAvailable)
                         .confirmationDialog(

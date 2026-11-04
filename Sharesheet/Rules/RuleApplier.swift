@@ -16,12 +16,17 @@ actor RuleApplier: RuleApplying {
 
     private let store: any ItemStore
     private let index: LibraryIndex
+    private let redirects: MoveRedirects?
     private let rules: @Sendable () async -> RuleSet
     private let evaluate: Evaluate
 
-    init(store: any ItemStore, index: LibraryIndex, rules: @escaping @Sendable () async -> RuleSet, evaluate: @escaping Evaluate) {
+    init(
+        store: any ItemStore, index: LibraryIndex, redirects: MoveRedirects? = nil,
+        rules: @escaping @Sendable () async -> RuleSet, evaluate: @escaping Evaluate
+    ) {
         self.store = store
         self.index = index
+        self.redirects = redirects
         self.rules = rules
         self.evaluate = evaluate
     }
@@ -54,6 +59,7 @@ actor RuleApplier: RuleApplying {
                 let moved = try await store.move(current, to: path)
                 try? index.remove(current)
                 try? index.upsert(moved)
+                redirects?.record(from: current, to: moved.id)
                 current = moved.id
             }
         } catch {

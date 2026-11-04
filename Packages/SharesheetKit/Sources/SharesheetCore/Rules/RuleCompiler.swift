@@ -20,6 +20,11 @@ public struct CompiledRules: Equatable, Sendable {
 public enum RuleContext {
     public static let maxTextCharacters = 6_000
 
+    /// Runs of whitespace (including line breaks, as in PDF text) become one space, so a phrase matches across them.
+    public static func normalized(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
     /// The evaluation input: lowercased fields of the item, its `text`, and the compiled `values` as `rv`.
     public static func json(for item: Item, text: String, values: [String]) -> Data {
         var domain = item.url?.host()?.lowercased() ?? ""
@@ -28,9 +33,9 @@ public enum RuleContext {
             "type": item.type.rawValue.lowercased(),
             "url": item.url?.absoluteString.lowercased() ?? "",
             "domain": domain,
-            "title": item.title.lowercased(),
-            "note": item.note.lowercased(),
-            "text": String(text.lowercased().prefix(maxTextCharacters)),
+            "title": normalized(item.title).lowercased(),
+            "note": normalized(item.note).lowercased(),
+            "text": String(normalized(text).lowercased().prefix(maxTextCharacters)),
             "tag": item.tags.map { $0.lowercased() },
             "rv": values,
         ]
@@ -47,7 +52,7 @@ public enum RuleCompiler {
         var rows: [[String: String]] = []
 
         for rule in set.rules where rule.enabled {
-            let conditions = rule.conditions.map { ($0, $0.value.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            let conditions = rule.conditions.map { ($0, RuleContext.normalized($0.value)) }
             guard !conditions.isEmpty, conditions.allSatisfy({ !$0.1.isEmpty }) else { continue }
             var tagValues: [String] = []
             var move: String?

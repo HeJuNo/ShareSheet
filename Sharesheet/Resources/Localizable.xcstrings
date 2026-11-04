@@ -220,6 +220,9 @@
     "Without" : {
       "extractionState" : "manual"
     },
+    "The rules file is invalid, so no rules are applied." : {
+      "extractionState" : "manual"
+    },
     "Text" : {
       "extractionState" : "manual"
     },

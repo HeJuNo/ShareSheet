@@ -29,6 +29,15 @@ import Testing
         #expect(json["rv"] as? [String] == ["x", "Y"])
     }
 
+    @Test func whitespaceRunsAreCollapsedInTheContextAndInConditionValues() throws {
+        let item = Item(id: ItemID(relativePath: "Unsorted/A.md"), type: .text, title: "A\n  B", created: Date())
+        let json = try object(RuleContext.json(for: item, text: "SVS\n  Konto-\tauszug ", values: []))
+        #expect(json["text"] as? String == "svs konto- auszug")
+        #expect(json["title"] as? String == "a b")
+        let compiled = try #require(RuleCompiler.compile(RuleSet(rules: [rule("w", [contains(.text, "SVS \n Konto")], [.addTag("Tag  X")])])))
+        #expect(compiled.values == ["svs konto", "Tag  X"])
+    }
+
     @Test func compilerSkipsDisabledAndInvalidRules() {
         let set = RuleSet(rules: [
             rule("off", enabled: false, [contains(.url, "a")], [.addTag("x")]),

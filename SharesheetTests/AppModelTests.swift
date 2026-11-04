@@ -37,11 +37,13 @@ struct ModelEnv {
         store = FolderItemStore(root: libraryRoot)
     }
 
-    func model(iCloud: Bool = true, temporaryRoot: URL? = nil) -> AppModel {
+    func model(
+        iCloud: Bool = true, temporaryRoot: URL? = nil, redirects: MoveRedirects = MoveRedirects()
+    ) -> AppModel {
         let store = self.store
         return AppModel(
             storeFactory: { iCloud ? store : nil }, index: index, inbox: inbox, runner: nil,
-            extensionTemporaryRoot: temporaryRoot)
+            extensionTemporaryRoot: temporaryRoot, redirects: redirects)
     }
 
     func enqueueText(_ title: String) throws {

@@ -73,6 +73,21 @@ struct RuleEngineTests {
         #expect(try await engine.outcome(for: set, item: pdf(), text: "nichts").tags.isEmpty)
     }
 
+    @Test func aNewlineInsideAValueIsData() async throws {
+        let engine = try RuleEngine()
+        let set = RuleSet(rules: [rule("n", [RuleCondition(field: .title, op: .contains, value: "a\"+\nb")], [.addTag("hit")])])
+        let titled = Item(id: ItemID(relativePath: "Unsorted/T.md"), type: .text, title: "x a\"+ b y", created: Date())
+        // The newline in the value is whitespace like in the text, so it matches a single space.
+        #expect(try await engine.outcome(for: set, item: titled, text: "").tags == ["hit"])
+    }
+
+    @Test func aPhraseMatchesAcrossLineBreaksOfAPdf() async throws {
+        let engine = try RuleEngine()
+        let set = RuleSet(rules: [svsRule, rule("phrase", [RuleCondition(field: .text, op: .contains, value: "SVS  Kontoauszug")], [.addTag("phrase")])])
+        let outcome = try await engine.outcome(for: set, item: pdf(), text: "Die SVS\n   Kontoauszug  Oktober")
+        #expect(outcome == RuleOutcome(tags: ["phrase"], moveTo: "Sozialversicherung"))
+    }
+
     @Test func noValidRuleMeansEmptyOutcome() async throws {
         let engine = try RuleEngine()
         let empty = rule("e", [], [.addTag("x")])
