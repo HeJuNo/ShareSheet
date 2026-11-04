@@ -14,13 +14,14 @@ private final class StubTagger: DocumentTagging, @unchecked Sendable {
 
 /// Never answers until cancelled; reports when a call started.
 private final class SleepyTagger: DocumentTagging, @unchecked Sendable {
+    var sleep = 600
     private let lock = NSLock()
     private var started = false
     var hasStarted: Bool { lock.withLock { started } }
     var isAvailable: Bool { true }
     func tag(forText text: String, existingTags: [String]) async throws -> String? {
         lock.withLock { started = true }
-        try await Task.sleep(for: .seconds(600))
+        try await Task.sleep(for: .seconds(sleep))
         return nil
     }
 }
@@ -224,5 +225,36 @@ struct AppModelAnalysisTests {
         try await model.acceptSuggestedTag("Rechnungen", for: item.id)
 
         #expect(try await env.store.item(item.id).tags == ["Rechnung"])
+    }
+
+    @Test func stoppingDuringCapturesDoesNotStartAnAnalysis() async throws {
+        let env = try ModelEnv()
+        let store = env.store
+        let tagger = SleepyTagger()
+        tagger.sleep = 8
+        let analyzer = DocumentAnalyzer(store: store, index: env.index, tagger: tagger, tagMode: { .suggest })
+        let capturer = GatedCapturer()
+        let runner = CaptureRunner(
+            store: store, index: env.index, capturer: capturer, archiver: HTMLArchiver(fetcher: NoFetch()),
+            favicons: FaviconFetcher(fetcher: NoFetch()), attemptMarker: env.base.appending(path: "capture-attempt"))
+        let model = AppModel(
+            storeFactory: { store }, index: env.index, inbox: env.inbox, runner: runner, analyzer: analyzer,
+            defaults: makeDefaults())
+        await model.refresh()  // nothing to capture or analyze yet: no analysis run is left over
+        await model.analysisFinished()
+        _ = try await addPDF(env)
+        let link = try await store.create(
+            ItemDraft(type: .link, url: URL(string: "https://example.com/a")!, title: "A", capture: .pending), in: .unsorted)
+        try env.index.upsert(link)
+        model.capturePendingNow()
+        while !capturer.hasStarted { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!model.isAnalyzing)
+
+        let started = ContinuousClock.now
+        await model.stopCaptures()
+
+        #expect(ContinuousClock.now - started < .seconds(3))
+        #expect(!model.isAnalyzing)
+        #expect(!tagger.hasStarted)
     }
 }

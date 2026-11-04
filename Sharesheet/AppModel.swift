@@ -223,6 +223,8 @@ enum AnalysisSettings {
         captureTask?.cancel()
         // Nothing may still be writing the index or the library when the app suspends.
         await captureTask?.value
+        analysisRequested = false
+        analysisTask?.cancel()
         await analysisTask?.value
     }
 
@@ -261,7 +263,8 @@ enum AnalysisSettings {
             } while !Task.isCancelled && self?.captureRequested == true
             self?.captureTask = nil
             self?.reloadFromIndex()
-            self?.startAnalysis()  // the pages captured now have their text in the index
+            // The pages captured now have their text in the index; not when stopping.
+            if !Task.isCancelled { self?.startAnalysis() }
         }
     }
 
