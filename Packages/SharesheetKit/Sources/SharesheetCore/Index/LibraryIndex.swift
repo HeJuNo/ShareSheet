@@ -189,6 +189,11 @@ public final class LibraryIndex: Sendable {
             try db.execute(sql: "DELETE FROM item_tags")
             try db.execute(sql: "DELETE FROM items")
             for item in items { try Self.insert(item, db) }
+            // Analysis of files and pages that no item has any more (deleted here or on another device).
+            try db.execute(sql: """
+                DELETE FROM analysis WHERE NOT EXISTS (
+                    SELECT 1 FROM items WHERE items.file = analysis.source OR items.archive = analysis.source)
+                """)
         }
     }
 
@@ -239,6 +244,18 @@ public final class LibraryIndex: Sendable {
                 UPDATE analysis SET suggested_tag = ?
                 WHERE source = (SELECT COALESCE(file, archive) FROM items WHERE id = ?)
                 """, arguments: [tag, id.relativePath])
+        }
+    }
+
+    /// Deletes the analysis row of `source` unless an item still has it as its file or archive. For a deleted
+    /// item: a new file may reuse the name and must not inherit the old keywords.
+    public func removeAnalysis(forSource source: String) throws {
+        try pool.write { db in
+            let inUse = try Bool.fetchOne(db, sql: """
+                SELECT EXISTS (SELECT 1 FROM items WHERE file = ?1 OR archive = ?1)
+                """, arguments: [source]) ?? false
+            guard !inUse else { return }
+            try db.execute(sql: "DELETE FROM analysis WHERE source = ?", arguments: [source])
         }
     }
 
@@ -310,6 +327,7 @@ public final class LibraryIndex: Sendable {
         }
     }
 
+    /// Matches exact tokens (one FTS query per term; no prefix matching).
     /// `documents`: items that have an analysis row, archive text or document text; `frequencies[term]`: how many of
     /// them contain the term in their document text, archive text or title.
     public func documentFrequencies(of terms: [String]) throws -> (documents: Int, frequencies: [String: Int]) {

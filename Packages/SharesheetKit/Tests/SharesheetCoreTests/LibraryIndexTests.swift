@@ -182,6 +182,51 @@ import Testing
         #expect(try index.analysisCandidates().count == 2)
     }
 
+    @Test func replaceAllPrunesOrphanAnalysisButKeepsSurvivors() throws {
+        let index = try LibraryIndex(path: tempDB())
+        let keep = Item.fixture(id: "Unsorted/K.md", type: .document, url: nil, file: "_attachments/k.pdf", title: "K")
+        let gone = Item.fixture(id: "Unsorted/G.md", type: .document, url: nil, file: "_attachments/g.pdf", title: "G")
+        let page = Item.fixture(id: "Unsorted/P.md", title: "P", archive: "_attachments/p.html")
+        try index.replaceAll(with: [keep, gone, page])
+        try index.setAnalysis(source: "_attachments/k.pdf", text: "kept", keywords: [], suggestedTag: nil)
+        try index.setAnalysis(source: "_attachments/g.pdf", text: "orphaned", keywords: [], suggestedTag: nil)
+        try index.setAnalysis(source: "_attachments/p.html", text: nil, keywords: [], suggestedTag: nil)
+        try index.replaceAll(with: [keep, page])
+        #expect(try index.analysisCandidates().isEmpty)
+        try index.replaceAll(with: [keep, gone, page])
+        #expect(try index.analysisCandidates().map(\.source) == ["_attachments/g.pdf"])
+        #expect(ids(try index.search(.init(text: "kept", scope: .all))) == ["Unsorted/K.md"])
+    }
+
+    @Test func removeAnalysisForSourceKeepsRowsStillInUse() throws {
+        let index = try LibraryIndex(path: tempDB())
+        let item = Item.fixture(id: "Unsorted/F.md", type: .document, url: nil, file: "_attachments/f.pdf", title: "F")
+        try index.replaceAll(with: [item])
+        try index.setAnalysis(source: "_attachments/f.pdf", text: "x", keywords: [], suggestedTag: nil)
+        try index.removeAnalysis(forSource: "_attachments/f.pdf")
+        #expect(try index.analysisCandidates().isEmpty)  // still referenced: kept
+        try index.remove(item.id)
+        try index.upsert(.fixture(id: "Unsorted/F2.md", type: .document, url: nil, file: "_attachments/f.pdf", title: "F2"))
+        try index.removeAnalysis(forSource: "_attachments/f.pdf")
+        #expect(try index.analysisCandidates().isEmpty)  // referenced by the new item: kept
+        try index.remove(ItemID(relativePath: "Unsorted/F2.md"))
+        try index.removeAnalysis(forSource: "_attachments/f.pdf")
+        try index.upsert(.fixture(id: "Unsorted/F3.md", type: .document, url: nil, file: "_attachments/f.pdf", title: "F3"))
+        #expect(try index.analysisCandidates().count == 1)
+    }
+
+    @Test func upsertAndRemoveKeepAnalysis() throws {
+        let index = try LibraryIndex(path: tempDB())
+        let item = Item.fixture(id: "Unsorted/F.md", type: .document, url: nil, file: "_attachments/f.pdf", title: "F")
+        try index.replaceAll(with: [item])
+        try index.setAnalysis(source: "_attachments/f.pdf", text: "x", keywords: [], suggestedTag: nil)
+        try index.upsert(item)
+        #expect(try index.analysisCandidates().isEmpty)
+        try index.remove(item.id)
+        try index.upsert(item)
+        #expect(try index.analysisCandidates().isEmpty)
+    }
+
     @Test func suggestedTagCanBeSetAndCleared() throws {
         let index = try LibraryIndex(path: tempDB())
         let id = ItemID(relativePath: "Unsorted/F.md")

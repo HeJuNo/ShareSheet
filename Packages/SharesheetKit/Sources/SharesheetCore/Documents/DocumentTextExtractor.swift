@@ -18,18 +18,51 @@ public enum DocumentTextExtractor {
 
     /// The text of the file, or `""` when it is unreadable, locked or of an unsupported type. Never throws.
     /// OCR and PDF rendering run off the calling actor.
+    /// Cancelling the caller stops OCR within one page and returns the text read so far.
     public static func text(from url: URL, contentType: UTType) async -> String {
-        await Task.detached(priority: .userInitiated) {
-            extract(from: url, contentType: contentType)
-        }.value
+        let cancellation = Cancellation()
+        return await withTaskCancellationHandler {
+            await Task.detached(priority: .userInitiated) {
+                extract(from: url, contentType: contentType, cancellation: cancellation)
+            }.value
+        } onCancel: {
+            cancellation.cancel()
+        }
     }
 
-    private static func extract(from url: URL, contentType: UTType) -> String {
+    /// A cancel flag the OCR loop can poll from its own thread; also cancels the Vision request in flight.
+    private final class Cancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        private var request: VNRequest?
+
+        var isCancelled: Bool { lock.withLock { cancelled } }
+
+        func cancel() {
+            let current = lock.withLock { () -> VNRequest? in
+                cancelled = true
+                return request
+            }
+            current?.cancel()
+        }
+
+        /// Registers the request in flight; false when already cancelled.
+        func begin(_ request: VNRequest) -> Bool {
+            lock.withLock {
+                self.request = request
+                return !cancelled
+            }
+        }
+
+        func end() { lock.withLock { request = nil } }
+    }
+
+    private static func extract(from url: URL, contentType: UTType, cancellation: Cancellation) -> String {
         let raw: String
         if contentType.conforms(to: .pdf) {
-            raw = pdfText(at: url)
+            raw = pdfText(at: url, cancellation: cancellation)
         } else if contentType.conforms(to: .image) {
-            raw = imageText(at: url)
+            raw = imageText(at: url, cancellation: cancellation)
         } else if contentType.conforms(to: .plainText) {
             raw = plainText(at: url)
         } else {
@@ -47,20 +80,25 @@ public enum DocumentTextExtractor {
 
     // MARK: PDF
 
-    private static func pdfText(at url: URL) -> String {
+    private static func pdfText(at url: URL, cancellation: Cancellation) -> String {
         guard let document = PDFDocument(url: url), !document.isLocked else { return "" }
         var pages: [String] = []
         var ocrPages = 0
         var length = 0
         for index in 0..<document.pageCount {
+            if cancellation.isCancelled { break }
             guard let page = document.page(at: index) else { continue }
             var text = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if text.count < minimumTextLayerCharacters, ocrPages < maxOCRPages {
                 ocrPages += 1
-                if let image = render(page) {
-                    let recognized = recognizeText(in: image)
-                    if recognized.count > text.count { text = recognized }
+                // Page bitmaps are large; release them before the next page.
+                autoreleasepool {
+                    if let image = render(page) {
+                        let recognized = recognizeText(in: image, cancellation: cancellation)
+                        if recognized.count > text.count { text = recognized }
+                    }
                 }
+                if cancellation.isCancelled { break }  // a cancelled page is not an answer
             }
             if !text.isEmpty {
                 pages.append(text)
@@ -91,20 +129,22 @@ public enum DocumentTextExtractor {
 
     // MARK: Images and OCR
 
-    private static func imageText(at url: URL) -> String {
+    private static func imageText(at url: URL, cancellation: Cancellation) -> String {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else { return "" }
-        return recognizeText(in: image)
+        return recognizeText(in: image, cancellation: cancellation)
     }
 
-    private static func recognizeText(in image: CGImage) -> String {
+    private static func recognizeText(in image: CGImage, cancellation: Cancellation) -> String {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.recognitionLanguages = ["de-DE", "en-US"]
         request.usesLanguageCorrection = true
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
-        guard (try? handler.perform([request])) != nil else { return "" }
+        guard cancellation.begin(request) else { return "" }
+        defer { cancellation.end() }
+        guard (try? handler.perform([request])) != nil, !cancellation.isCancelled else { return "" }
         return (request.results ?? [])
             .compactMap { $0.topCandidates(1).first?.string }
             .joined(separator: "\n")

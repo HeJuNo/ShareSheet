@@ -70,7 +70,7 @@ private func writeScannedPDF(_ pageTexts: [String], to url: URL) throws {
 @Suite struct DocumentTextExtractorTests {
     @Test func textPDFReturnsItsText() async throws {
         let file = try makeTempDirectory().appending(path: "text.pdf")
-        try writeTextPDF("Kontoauszug Oktober", to: file)
+        try writeTextPDF("Kontoauszug Oktober fuer das Konto 4711", to: file)
         let text = await DocumentTextExtractor.text(from: file, contentType: .pdf)
         #expect(text.contains("Kontoauszug"))
     }
@@ -134,5 +134,20 @@ private func writeScannedPDF(_ pageTexts: [String], to url: URL) throws {
         let text = await DocumentTextExtractor.text(from: file, contentType: .pdf)
         #expect(text.contains("Alpha"))
         #expect(!text.contains("Omega"))
+    }
+
+    @Test func cancellingStopsOCRWithinAPage() async throws {
+        let file = try makeTempDirectory().appending(path: "scan30.pdf")
+        try writeScannedPDF((1..<31).map { _ in "Rechnung" }, to: file)
+        let start = ContinuousClock.now
+        let task = Task { await DocumentTextExtractor.text(from: file, contentType: .pdf) }
+        try await Task.sleep(for: .milliseconds(700))
+        task.cancel()
+        let text = await task.value
+        let elapsed = ContinuousClock.now - start
+        let pages = text.components(separatedBy: "Rechnung").count - 1
+        // 30 pages of accurate OCR take far longer than this; a cancelled run ends after the page in flight.
+        #expect(elapsed < .seconds(6), "took \(elapsed)")
+        #expect(pages < 30, "read \(pages) pages")
     }
 }
