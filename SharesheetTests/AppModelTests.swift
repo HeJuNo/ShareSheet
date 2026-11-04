@@ -3,6 +3,22 @@ import Testing
 @testable import Sharesheet
 import SharesheetCore
 
+/// Polls `condition` until it holds; records an issue and returns after `timeout` instead of hanging the run.
+@MainActor
+func waitUntil(
+    _ what: String, timeout: Duration = .seconds(10), sourceLocation: SourceLocation = #_sourceLocation,
+    _ condition: () -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while !condition() {
+        if ContinuousClock.now >= deadline {
+            Issue.record("Timed out waiting for \(what)", sourceLocation: sourceLocation)
+            return
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+}
+
 @MainActor
 struct ModelEnv {
     let base: URL

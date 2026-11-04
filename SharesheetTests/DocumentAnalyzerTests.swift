@@ -67,7 +67,46 @@ private final class FlakyStore: ItemStore, @unchecked Sendable {
     func changes() -> AsyncStream<Void> { base.changes() }
 }
 
+/// Counts `attachmentURL` calls.
+private final class SpyStore: ItemStore, @unchecked Sendable {
+    let base: FolderItemStore
+    private let lock = NSLock()
+    private var _attachmentCalls = 0
+    var attachmentCalls: Int { lock.withLock { _attachmentCalls } }
+
+    init(_ base: FolderItemStore) { self.base = base }
+
+    func listItems() async throws -> [Item] { try await base.listItems() }
+    func item(_ id: ItemID) async throws -> Item { try await base.item(id) }
+    func findItem(url: URL) async throws -> Item? { try await base.findItem(url: url) }
+    func create(_ draft: ItemDraft, in collection: CollectionPath, willWrite: @Sendable (ItemID) throws -> Void) async throws -> Item {
+        try await base.create(draft, in: collection, willWrite: willWrite)
+    }
+    func update(_ item: Item) async throws -> Item { try await base.update(item) }
+    func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) async throws -> Item {
+        try await base.modify(id, transform)
+    }
+    func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item { try await base.move(id, to: collection) }
+    func delete(_ id: ItemID) async throws { try await base.delete(id) }
+    func addAttachment(from source: URL, preferredName: String) async throws -> String {
+        try await base.addAttachment(from: source, preferredName: preferredName)
+    }
+    func attachmentURL(_ relativePath: String) async throws -> URL {
+        lock.withLock { _attachmentCalls += 1 }
+        return try await base.attachmentURL(relativePath)
+    }
+    func collections() async throws -> [CollectionPath] { try await base.collections() }
+    func createCollection(named name: String, in parent: CollectionPath) async throws -> CollectionPath {
+        try await base.createCollection(named: name, in: parent)
+    }
+    func deleteCollection(_ path: CollectionPath, moveItemsTo destination: CollectionPath?) async throws {
+        try await base.deleteCollection(path, moveItemsTo: destination)
+    }
+    func changes() -> AsyncStream<Void> { base.changes() }
+}
+
 @MainActor
+@Suite(.timeLimit(.minutes(1)))
 struct DocumentAnalyzerTests {
     private func makePDF(_ lines: [String], in dir: URL) throws -> URL {
         let url = dir.appending(path: "doc-\(UUID().uuidString).pdf")
@@ -263,5 +302,59 @@ struct DocumentAnalyzerTests {
         let tagger = FakeTagger(answer: "Rechnung")
         _ = await analyzer(env, tagger: tagger, mode: .automatic).runPending()
         #expect(try await tags(env, item) == ["x", "Rechnung"])
+    }
+
+    @Test func unsupportedFileTypesAreMarkedAnalyzedWithoutTouchingTheFile() async throws {
+        let env = try ModelEnv()
+        let spy = SpyStore(env.store)
+        var items: [Item] = []
+        for name in ["clip.mp4", "bundle.zip", "noextension"] {
+            let file = env.base.appending(path: name)
+            try Data("data".utf8).write(to: file)
+            let item = try await env.store.create(ItemDraft(type: .document, title: name, fileSource: file), in: .unsorted)
+            try env.index.upsert(item)
+            items.append(item)
+        }
+        let tagger = FakeTagger(answer: "Rechnung")
+        let runner = analyzer(env, store: spy, tagger: tagger, mode: .automatic)
+        #expect(await runner.runPending() == 3)
+        #expect(spy.attachmentCalls == 0)
+        #expect(tagger.calls == 0)
+        for item in items { #expect(try env.index.analysis(forItem: item.id) != nil) }
+        #expect(try env.index.analysisCandidates().isEmpty)
+        #expect(await runner.runPending() == 0)
+    }
+
+    @Test func automaticModeDoesNotAddATagInAnotherSpelling() async throws {
+        let env = try ModelEnv()
+        try env.index.upsert(try await env.store.create(ItemDraft(type: .text, title: "Other", tags: ["Rechnung"]), in: .unsorted))
+        let item = try await addPDF(env, tags: ["rechnung"])
+        _ = await analyzer(env, tagger: FakeTagger(answer: "Rechnung"), mode: .automatic).runPending()
+        #expect(try await tags(env, item) == ["rechnung"])
+    }
+
+    @Test func onlyTheMostFrequentTermsAreLookedUp() {
+        var counts = Dictionary(uniqueKeysWithValues: (0..<1000).map { ("term\(String(format: "%04d", $0))", 1) })
+        counts["alpha"] = 5
+        counts["zulu"] = 5
+        let top = DocumentAnalyzer.topTerms(counts, limit: DocumentAnalyzer.maxKeywordCandidates)
+        #expect(top.count == 300)
+        #expect(top["alpha"] == 5 && top["zulu"] == 5)
+        // Ties of count 1 go to the alphabetically first terms.
+        #expect(top["term0297"] == 1 && top["term0298"] == nil)
+        let small = ["a": 1, "b": 2]
+        #expect(DocumentAnalyzer.topTerms(small, limit: 300) == small)
+    }
+
+    @Test func aDocumentWithManyDistinctTermsStillGetsKeywords() async throws {
+        let env = try ModelEnv()
+        let words = (0..<1000).map { "wort" + String(UnicodeScalar(97 + $0 / 676)!) + String(UnicodeScalar(97 + $0 / 26 % 26)!) + String(UnicodeScalar(97 + $0 % 26)!) }
+        let url = env.base.appending(path: "many.txt")
+        try Data((["Hobelbank Hobelbank Hobelbank"] + words).joined(separator: " ").utf8).write(to: url)
+        let item = try await env.store.create(ItemDraft(type: .document, title: "Many", fileSource: url), in: .unsorted)
+        try env.index.upsert(item)
+        #expect(await analyzer(env, tagger: FakeTagger(), mode: .off).runPending() == 1)
+        let keywords = try #require(try env.index.analysis(forItem: item.id)).keywords
+        #expect(keywords.first?.term.lowercased() == "hobelbank")
     }
 }

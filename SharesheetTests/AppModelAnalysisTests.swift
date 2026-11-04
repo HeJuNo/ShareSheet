@@ -14,7 +14,7 @@ private final class StubTagger: DocumentTagging, @unchecked Sendable {
 
 /// Never answers until cancelled; reports when a call started.
 private final class SleepyTagger: DocumentTagging, @unchecked Sendable {
-    var sleep = 600
+    var sleep = 30
     private let lock = NSLock()
     private var started = false
     var hasStarted: Bool { lock.withLock { started } }
@@ -46,17 +46,20 @@ private struct NoFetch: ResourceFetching {
 }
 
 @MainActor
+@Suite(.timeLimit(.minutes(1)))
 struct AppModelAnalysisTests {
     private func makeDefaults() -> UserDefaults {
         UserDefaults(suiteName: "AppModelAnalysisTests-\(UUID().uuidString)")!
     }
 
-    private func makePDF(in dir: URL) throws -> URL {
-        let url = dir.appending(path: "doc-\(UUID().uuidString).pdf")
+    private func makePDF(
+        in dir: URL, name: String = "doc-\(UUID().uuidString).pdf",
+        lines: [String] = ["Rechnung Nummer 4711 Tischlerei Eichenholz", "Hobelbank Leimzwingen Eichenholz Hobelbank"]
+    ) throws -> URL {
+        let url = dir.appending(path: name)
         var box = CGRect(x: 0, y: 0, width: 612, height: 792)
         let context = try #require(CGContext(url as CFURL, mediaBox: &box, nil))
         context.beginPDFPage(nil)
-        let lines = ["Rechnung Nummer 4711 Tischlerei Eichenholz", "Hobelbank Leimzwingen Eichenholz Hobelbank"]
         for (row, line) in lines.enumerated() {
             let string = NSAttributedString(
                 string: line, attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 14, nil)])
@@ -76,7 +79,8 @@ struct AppModelAnalysisTests {
     }
 
     private func model(
-        _ env: ModelEnv, defaults: UserDefaults, runner: CaptureRunner? = nil, answer: String? = "Rechnung"
+        _ env: ModelEnv, defaults: UserDefaults, runner: CaptureRunner? = nil, answer: String? = "Rechnung",
+        isForeground: @escaping @Sendable () async -> Bool = { true }
     ) -> AppModel {
         let store = env.store
         nonisolated(unsafe) let sharedDefaults = defaults  // UserDefaults is thread-safe
@@ -85,7 +89,7 @@ struct AppModelAnalysisTests {
             tagMode: { AnalysisSettings.tagMode(sharedDefaults) })
         return AppModel(
             storeFactory: { store }, index: env.index, inbox: env.inbox, runner: runner, analyzer: analyzer,
-            defaults: defaults)
+            defaults: defaults, isForeground: isForeground)
     }
 
     @Test func refreshStartsAnalysisAndSearchFindsDocumentText() async throws {
@@ -157,12 +161,13 @@ struct AppModelAnalysisTests {
             favicons: FaviconFetcher(fetcher: NoFetch()), attemptMarker: env.base.appending(path: "capture-attempt"))
         let model = model(env, defaults: makeDefaults(), runner: runner)
         await model.refresh()
-        while !capturer.hasStarted { try await Task.sleep(for: .milliseconds(10)) }
+        try await waitUntil("the capture to start") { capturer.hasStarted }
         try await Task.sleep(for: .milliseconds(300))
         #expect(model.analysis(for: item.id) == nil)
 
         capturer.release()
         await model.refreshAndCapture()
+        await model.analysisFinished()
 
         #expect(model.analysis(for: item.id) != nil)
     }
@@ -189,7 +194,7 @@ struct AppModelAnalysisTests {
             storeFactory: { store }, index: env.index, inbox: env.inbox, runner: nil, analyzer: analyzer,
             defaults: makeDefaults())
         await model.refresh()
-        while !tagger.hasStarted { try await Task.sleep(for: .milliseconds(10)) }
+        try await waitUntil("the tagger to start") { tagger.hasStarted }
         #expect(model.isAnalyzing)
 
         await model.stopCaptures()
@@ -247,7 +252,7 @@ struct AppModelAnalysisTests {
             ItemDraft(type: .link, url: URL(string: "https://example.com/a")!, title: "A", capture: .pending), in: .unsorted)
         try env.index.upsert(link)
         model.capturePendingNow()
-        while !capturer.hasStarted { try await Task.sleep(for: .milliseconds(10)) }
+        try await waitUntil("the capture to start") { capturer.hasStarted }
         #expect(!model.isAnalyzing)
 
         let started = ContinuousClock.now
@@ -259,11 +264,77 @@ struct AppModelAnalysisTests {
     }
 
     @Test func aSuggestionForATagTheItemAlreadyHasIsNotShown() {
-        let analysis: String? = "Rechnung"
-        #expect(AppModel.visibleSuggestion(analysis, itemTags: []) == "Rechnung")
-        #expect(AppModel.visibleSuggestion(analysis, itemTags: ["Steuer"]) == "Rechnung")
-        #expect(AppModel.visibleSuggestion(analysis, itemTags: ["rechnung"]) == nil)
+        let suggestion: String? = "Rechnung"
+        #expect(AppModel.visibleSuggestion(suggestion, itemTags: []) == "Rechnung")
+        #expect(AppModel.visibleSuggestion(suggestion, itemTags: ["Steuer"]) == "Rechnung")
+        #expect(AppModel.visibleSuggestion(suggestion, itemTags: ["rechnung"]) == nil)
         #expect(AppModel.visibleSuggestion(nil, itemTags: []) == nil)
-        #expect(AppModel.visibleSuggestion(nil, itemTags: []) == nil)
+    }
+
+    @Test func noAnalysisRunsInTheBackground() async throws {
+        let env = try ModelEnv()
+        let item = try await addPDF(env)
+        let model = model(env, defaults: makeDefaults(), isForeground: { false })
+        await model.refresh()
+        await model.analysisFinished()
+        #expect(model.analysis(for: item.id) == nil)
+        #expect(try env.index.analysisCandidates().map(\.id) == [item.id])
+    }
+
+    @Test func refreshAndCaptureDoesNotWaitForAnAnalysis() async throws {
+        let env = try ModelEnv()
+        _ = try await addPDF(env)
+        let store = env.store
+        let tagger = SleepyTagger()
+        tagger.sleep = 20
+        let analyzer = DocumentAnalyzer(store: store, index: env.index, tagger: tagger, tagMode: { .suggest })
+        let model = AppModel(
+            storeFactory: { store }, index: env.index, inbox: env.inbox, runner: nil, analyzer: analyzer,
+            defaults: makeDefaults())
+        let started = ContinuousClock.now
+        await model.refreshAndCapture()
+        #expect(ContinuousClock.now - started < .seconds(10))
+        #expect(model.isAnalyzing)
+        await model.stopCaptures()
+    }
+
+    @Test func aFileWithTheNameOfADeletedOneIsAnalyzedAfresh() async throws {
+        let env = try ModelEnv()
+        let first = try await addPDF(env)
+        let model = model(env, defaults: makeDefaults())
+        await model.refresh()
+        await model.analysisFinished()
+        #expect(model.analysis(for: first.id)?.keywords.isEmpty == false)
+
+        try await model.delete(first.id)
+        // The freed attachment name is taken over by the next file.
+        let dir = env.base.appending(path: "new", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let name = (try #require(first.file) as NSString).lastPathComponent
+        let fresh = try makePDF(in: dir, name: name, lines: ["Quartalsbericht Rentabilitaet Quartalsbericht"])
+        let second = try await env.store.create(
+            ItemDraft(type: .document, title: "Doc", fileSource: fresh), in: .unsorted)
+        try env.index.upsert(second)
+        #expect(second.file == first.file)
+        #expect(try env.index.analysisCandidates().map(\.id) == [second.id])
+        #expect(model.analysis(for: second.id) == nil)
+        #expect(try env.index.search(LibraryQuery(text: "Hobelbank", scope: .all)).isEmpty)
+
+        await model.refresh()
+        await model.analysisFinished()
+        let keywords = try #require(model.analysis(for: second.id)).keywords.map { $0.term.lowercased() }
+        #expect(keywords.contains("quartalsbericht"))
+        #expect(!keywords.contains("hobelbank"))
+    }
+
+    @Test func acceptingATagTheItemHasInAnotherSpellingAddsNothing() async throws {
+        let env = try ModelEnv()
+        _ = try await env.store.create(ItemDraft(type: .text, title: "Other", tags: ["Rechnung"]), in: .unsorted)
+        let created = try await env.store.create(
+            ItemDraft(type: .document, title: "Doc", tags: ["rechnung"], fileSource: try makePDF(in: env.base)), in: .unsorted)
+        let model = model(env, defaults: makeDefaults())
+        await model.refresh()
+        try await model.acceptSuggestedTag("Rechnung", for: created.id)
+        #expect(try await env.store.item(created.id).tags == ["rechnung"])
     }
 }
