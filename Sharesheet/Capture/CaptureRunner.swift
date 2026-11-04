@@ -14,6 +14,7 @@ actor CaptureRunner {
     private let resolveRedirects: @Sendable (URL) async -> URL?
     private let attemptMarker: URL?
     private let isForeground: @Sendable () async -> Bool
+    private let rules: (any RuleApplying)?
     private var tail: Task<Void, Never>?
     private var checkedAttemptMarker = false
 
@@ -24,7 +25,8 @@ actor CaptureRunner {
         store: any ItemStore, index: LibraryIndex, capturer: any PageCapturing, archiver: HTMLArchiver,
         favicons: FaviconFetcher, embeds: (any ResourceFetching)? = nil,
         resolveRedirects: @escaping @Sendable (URL) async -> URL? = CaptureRunner.followRedirects,
-        attemptMarker: URL? = nil, isForeground: @escaping @Sendable () async -> Bool = { true }
+        attemptMarker: URL? = nil, isForeground: @escaping @Sendable () async -> Bool = { true },
+        rules: (any RuleApplying)? = nil
     ) {
         self.embeds = embeds
         self.resolveRedirects = resolveRedirects
@@ -35,6 +37,7 @@ actor CaptureRunner {
         self.favicons = favicons
         self.attemptMarker = attemptMarker
         self.isForeground = isForeground
+        self.rules = rules
     }
 
     /// Captures items with `capture == .pending`, oldest first. Stops early when cancelled.
@@ -125,7 +128,9 @@ actor CaptureRunner {
         var done = 0, failed = 0
         for item in pending {
             if Task.isCancelled { break }
-            switch await process(item) {
+            let outcome = await process(item)
+            await applyRules(after: outcome, to: item.id)
+            switch outcome {
             case .done: done += 1
             case .failed: failed += 1
             case .deferred, .skipped, .gone: continue
@@ -137,7 +142,16 @@ actor CaptureRunner {
 
     private func captureOne(_ id: ItemID) async {
         guard let item = try? await store.item(id), item.url != nil else { return }
-        _ = await process(item)
+        await applyRules(after: await process(item), to: id)
+    }
+
+    /// Rules need only the metadata, so they also run after a failed or skipped capture; not while the capture
+    /// is still to be retried, and not for an item that is gone.
+    private func applyRules(after outcome: Outcome, to id: ItemID) async {
+        switch outcome {
+        case .done, .failed, .skipped: await rules?.apply(to: id)
+        case .deferred, .gone, .cancelled: break
+        }
     }
 
     /// `.done` only when both screenshot and archive were saved. A cancelled capture leaves the item untouched;

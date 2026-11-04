@@ -141,13 +141,74 @@ struct DocumentAnalyzerTests {
     }
 
     private func analyzer(
-        _ env: ModelEnv, store: (any ItemStore)? = nil, tagger: FakeTagger, mode: TagMode
+        _ env: ModelEnv, store: (any ItemStore)? = nil, tagger: FakeTagger, mode: TagMode, rules: (any RuleApplying)? = nil
     ) -> DocumentAnalyzer {
-        DocumentAnalyzer(store: store ?? env.store, index: env.index, tagger: tagger, tagMode: { mode })
+        DocumentAnalyzer(store: store ?? env.store, index: env.index, tagger: tagger, tagMode: { mode }, rules: rules)
     }
 
     private func tags(_ env: ModelEnv, _ item: Item) async throws -> [String] {
         try await env.store.item(item.id).tags
+    }
+
+    @Test func rulesRunOncePerAnalyzedDocumentAfterItsTextIsStored() async throws {
+        let env = try ModelEnv()
+        let item = try await addPDF(env)
+        let index = env.index
+        let rules = RecordingRules(probe: { try? index.analysisText(forItem: $0) })
+        let runner = analyzer(env, tagger: FakeTagger(), mode: .off, rules: rules)
+        #expect(await runner.runPending() == 1)
+        #expect(rules.applied == [item.id])
+        #expect(rules.probes.first??.contains("Eichenholz") == true)
+        #expect(await runner.runPending() == 0)
+        #expect(rules.applied == [item.id])
+    }
+
+    @Test func aKontoauszugPdfIsSortedIntoSozialversicherungThroughTheRealRuleEngine() async throws {
+        let env = try ModelEnv()
+        let hit = try await addPDF(env, lines: ["SVS Sozialversicherung", "Kontoauszug Oktober Buchung"], title: "Hit")
+        let miss = try await addPDF(env, lines: ["SVS Beitragsvorschreibung Oktober"], title: "Miss")
+        let sorted = try await addPDF(env, lines: ["SVS Kontoauszug Oktober"], title: "Sorted")
+        let moved = try await env.store.move(sorted.id, to: CollectionPath(components: ["Ablage"]))
+        try env.index.remove(sorted.id)
+        try env.index.upsert(moved)
+        let set = RuleSet(rules: [Rule(
+            id: "svs", name: "SVS", enabled: true,
+            conditions: [RuleCondition(field: .text, op: .contains, value: "SVS"), RuleCondition(field: .text, op: .contains, value: "Kontoauszug")],
+            actions: [.moveTo("Sozialversicherung")])])
+        let engine = try RuleEngine()
+        let rules = RuleApplier(
+            store: env.store, index: env.index, rules: { set },
+            evaluate: { set, item, text in try await engine.outcome(for: set, item: item, text: text) })
+        let target = CollectionPath(components: ["Sozialversicherung"])
+        _ = await analyzer(env, tagger: FakeTagger(), mode: .off, rules: rules).runPending()
+        let items = try await env.store.listItems()
+        #expect(items.first { $0.title == "Hit" }?.id.collection == target)
+        #expect(items.first { $0.title == "Miss" }?.id.collection == .unsorted)
+        #expect(items.first { $0.title == "Sorted" }?.id.collection == CollectionPath(components: ["Ablage"]))
+        #expect(try env.index.analysis(forItem: moved.id) != nil, "the sorted PDF was analyzed, so the rules did run for it")
+        _ = (hit, miss)
+    }
+
+    @Test func rulesRunAlsoForFilesThatCannotBeRead() async throws {
+        let env = try ModelEnv()
+        let broken = env.base.appending(path: "broken.pdf")
+        try Data("not a pdf".utf8).write(to: broken)
+        let item = try await env.store.create(ItemDraft(type: .document, title: "Broken", fileSource: broken), in: .unsorted)
+        try env.index.upsert(item)
+        let rules = RecordingRules()
+        #expect(await analyzer(env, tagger: FakeTagger(), mode: .off, rules: rules).runPending() == 1)
+        #expect(rules.applied == [item.id])
+    }
+
+    @Test func rulesWaitUntilASkippedDocumentIsAnalyzed() async throws {
+        let env = try ModelEnv()
+        let item = try await addPDF(env)
+        let rules = RecordingRules()
+        let runner = analyzer(env, store: FlakyStore(env.store), tagger: FakeTagger(), mode: .off, rules: rules)
+        #expect(await runner.runPending() == 0)
+        #expect(rules.applied.isEmpty)
+        #expect(await runner.runPending() == 1)
+        #expect(rules.applied == [item.id])
     }
 
     @Test func analyzesADocumentAndStoresTextKeywordsAndTag() async throws {

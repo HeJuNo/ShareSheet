@@ -136,12 +136,13 @@ private struct Env {
 
     func runner(
         _ capturer: FakeCapturer, isForeground: Bool = true, embeds: (any ResourceFetching)? = nil,
-        redirects: [URL: URL] = [:]
+        redirects: [URL: URL] = [:], rules: (any RuleApplying)? = nil
     ) -> CaptureRunner {
         CaptureRunner(
             store: store, index: index, capturer: capturer,
             archiver: HTMLArchiver(fetcher: StubFetcher()), favicons: FaviconFetcher(fetcher: StubFetcher()),
-            embeds: embeds, resolveRedirects: { redirects[$0] }, attemptMarker: marker, isForeground: { isForeground })
+            embeds: embeds, resolveRedirects: { redirects[$0] }, attemptMarker: marker, isForeground: { isForeground },
+            rules: rules)
     }
 
     func makeItem(
@@ -158,6 +159,51 @@ private struct Env {
 }
 
 struct CaptureRunnerTests {
+    @Test func rulesRunAfterADoneCaptureWithTheArchiveTextStored() async throws {
+        let env = try Env()
+        let item = try await env.makeItem("page", capture: .pending)
+        let index = env.index
+        let rules = RecordingRules(probe: { try? index.analysisText(forItem: $0) })
+        _ = await env.runner(FakeCapturer(), rules: rules).runPending()
+        #expect(rules.applied == [item.id])
+        #expect(rules.probes.first??.isEmpty == false)
+    }
+
+    @Test func anAppleLinkGetsTheTagAppleThroughTheRealRuleEngine() async throws {
+        let env = try Env()
+        let item = try await env.makeItem("apple", capture: .pending, url: URL(string: "https://www.apple.com/de/iphone")!)
+        let other = try await env.makeItem("other", capture: .pending, url: URL(string: "https://example.com/x")!)
+        let set = RuleSet(rules: [Rule(
+            id: "apple", name: "Apple", enabled: true,
+            conditions: [RuleCondition(field: .type, op: .is, value: "link"), RuleCondition(field: .url, op: .contains, value: "apple.com")],
+            actions: [.addTag("apple")])])
+        let engine = try RuleEngine()
+        let rules = RuleApplier(
+            store: env.store, index: env.index, rules: { set },
+            evaluate: { set, item, text in try await engine.outcome(for: set, item: item, text: text) })
+        _ = await env.runner(FakeCapturer(), rules: rules).runPending()
+        #expect(try await env.store.item(item.id).tags == ["apple"])
+        #expect(try await env.store.item(other.id).tags.isEmpty)
+    }
+
+    @Test func rulesAlsoRunAfterAFailedCaptureBecauseTheyNeedOnlyTheMetadata() async throws {
+        let env = try Env()
+        let item = try await env.makeItem("slow", capture: .pending)
+        let rules = RecordingRules()
+        _ = await env.runner(FakeCapturer(error: .timeout), rules: rules).runPending()
+        #expect(try await env.store.item(item.id).capture == .failed)
+        #expect(rules.applied == [item.id])
+    }
+
+    @Test func rulesWaitWhenTheCaptureIsRetriedLater() async throws {
+        let env = try Env()
+        let item = try await env.makeItem("later", capture: .pending)
+        let rules = RecordingRules()
+        _ = await env.runner(FakeCapturer(error: .timeout), isForeground: false, rules: rules).runPending()
+        #expect(try await env.store.item(item.id).capture == .pending)
+        #expect(rules.applied.isEmpty)
+    }
+
     @Test func runnerMarksFailedOnTimeout() async throws {
         let env = try Env()
         let item = try await env.makeItem("slow", capture: .pending)

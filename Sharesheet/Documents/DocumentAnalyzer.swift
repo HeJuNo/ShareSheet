@@ -12,17 +12,19 @@ actor DocumentAnalyzer {
     private let store: any ItemStore
     private let index: LibraryIndex
     private let tagger: any DocumentTagging
+    private let rules: (any RuleApplying)?
     private let tagMode: @Sendable () -> TagMode
     private var tail: Task<Void, Never>?
 
     init(
         store: any ItemStore, index: LibraryIndex, tagger: any DocumentTagging,
-        tagMode: @escaping @Sendable () -> TagMode
+        tagMode: @escaping @Sendable () -> TagMode, rules: (any RuleApplying)? = nil
     ) {
         self.store = store
         self.index = index
         self.tagger = tagger
         self.tagMode = tagMode
+        self.rules = rules
     }
 
     /// Analyzes every item that has no analysis yet. Returns how many were analyzed; items whose file is not on
@@ -47,7 +49,11 @@ actor DocumentAnalyzer {
         var analyzed = 0
         for candidate in candidates {
             if Task.isCancelled { break }
-            if await analyze(candidate) { analyzed += 1 }
+            if await analyze(candidate) {
+                analyzed += 1
+                // After the analysis row exists, so rules on the text see it.
+                await rules?.apply(to: candidate.id)
+            }
         }
         return analyzed
     }

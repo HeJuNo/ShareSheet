@@ -559,22 +559,38 @@ extension AppModel {
     /// The app's model on the iCloud library, the App Group index and inbox, with a live capture runner.
     static let shared = live()
 
+    /// The rules from `rules.json` in the library, read fresh for every item; nil when the ZEN engine cannot start.
+    /// A missing or broken file means no rules.
+    private static func liveRules(library: ICloudLibrary, index: LibraryIndex) -> (any RuleApplying)? {
+        guard let engine = try? RuleEngine() else { return nil }
+        return RuleApplier(
+            store: ResolvingItemStore(library: library), index: index,
+            rules: {
+                guard let root = await ICloudLocator.libraryRoot(), case .rules(let set) = RuleFile.load(from: root) else {
+                    return .empty
+                }
+                return set
+            },
+            evaluate: { set, item, text in try await engine.outcome(for: set, item: item, text: text) })
+    }
+
     private static func live() -> AppModel {
         let library = ICloudLibrary()
         let index = openIndex()
         let fm = FileManager.default
         let inbox = Inbox(root: AppGroup.inboxURL() ?? fm.temporaryDirectory.appending(path: "Inbox"))
         let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first ?? fm.temporaryDirectory
+        let rules = liveRules(library: library, index: index)
         let runner = CaptureRunner(
             store: ResolvingItemStore(library: library), index: index, capturer: WebPageCapturer(),
             archiver: HTMLArchiver(fetcher: URLSessionFetcher()), favicons: FaviconFetcher(),
             embeds: URLSessionFetcher(), attemptMarker: caches.appending(path: "capture-attempt"),
-            isForeground: { await UIApplication.shared.applicationState == .active })
+            isForeground: { await UIApplication.shared.applicationState == .active }, rules: rules)
         let analyzer = DocumentAnalyzer(
             store: ResolvingItemStore(library: library), index: index, tagger: FallbackTagger(
                 primary: FoundationModelsTagger(),
                 fallback: LocalTagger(examples: { (try? index.taggedExamples(limit: LocalTagger.maxExamples)) ?? [] })),
-            tagMode: { AnalysisSettings.tagMode() })
+            tagMode: { AnalysisSettings.tagMode() }, rules: rules)
         return AppModel(
             storeFactory: { await library.resolve() }, index: index, inbox: inbox, runner: runner,
             extensionTemporaryRoot: AppGroup.containerURL()?.appending(path: "Tmp", directoryHint: .isDirectory),
