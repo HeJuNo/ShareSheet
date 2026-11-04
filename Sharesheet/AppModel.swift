@@ -571,7 +571,9 @@ extension AppModel {
             embeds: URLSessionFetcher(), attemptMarker: caches.appending(path: "capture-attempt"),
             isForeground: { await UIApplication.shared.applicationState == .active })
         let analyzer = DocumentAnalyzer(
-            store: ResolvingItemStore(library: library), index: index, tagger: FoundationModelsTagger(),
+            store: ResolvingItemStore(library: library), index: index, tagger: FallbackTagger(
+                primary: FoundationModelsTagger(),
+                fallback: LocalTagger(examples: { (try? index.taggedExamples(limit: LocalTagger.maxExamples)) ?? [] })),
             tagMode: { AnalysisSettings.tagMode() })
         return AppModel(
             storeFactory: { await library.resolve() }, index: index, inbox: inbox, runner: runner,

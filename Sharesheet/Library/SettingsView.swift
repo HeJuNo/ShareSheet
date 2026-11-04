@@ -63,7 +63,7 @@ struct SettingsView: View {
                     }
                     .disabled(!analyzeDocuments)
                     if SystemLanguageModel.default.availability != .available {
-                        Text("Tags need Apple Intelligence, which isn't available on this iPhone.")
+                        Text("Without Apple Intelligence, tags are matched against your tagged documents and a few common kinds.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }

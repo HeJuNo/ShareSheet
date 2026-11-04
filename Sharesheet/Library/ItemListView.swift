@@ -6,7 +6,7 @@ struct ItemListView: View {
     @Environment(AppModel.self) private var model
     let query: LibraryQuery
     @State private var searchText = ""
-    @State private var tag: String?
+    @State private var tagFilter = TagFilter()
 
     var body: some View {
         ItemResults(query: effectiveQuery)
@@ -14,7 +14,7 @@ struct ItemListView: View {
             .searchable(text: $searchText, prompt: Text("Search"))
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    TagFilterMenu(selection: $tag, tags: TagFilterMenu.tags(of: model.items(untaggedQuery), in: model.tags))
+                    TagFilterMenu(filter: $tagFilter, tags: TagFilterMenu.tags(of: model.items(untaggedQuery), in: model.tags))
                 }
             }
             .refreshable { await model.refresh() }
@@ -29,7 +29,7 @@ struct ItemListView: View {
 
     private var effectiveQuery: LibraryQuery {
         var result = untaggedQuery
-        if let tag { result.tag = tag }
+        tagFilter.apply(to: &result)
         return result
     }
 
@@ -45,23 +45,58 @@ struct ItemListView: View {
     }
 }
 
-/// A toolbar menu choosing one tag (or none) to narrow a list.
+/// The tags a list must carry and the tags it must not carry.
+struct TagFilter: Equatable {
+    var included: [String] = []
+    var excluded: [String] = []
+
+    var isEmpty: Bool { included.isEmpty && excluded.isEmpty }
+
+    func apply(to query: inout LibraryQuery) {
+        query.tags = included
+        query.excludedTags = excluded
+    }
+
+    func includes(_ tag: String) -> Bool { included.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }
+    func excludes(_ tag: String) -> Bool { excluded.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }
+
+    /// Tapping a tag in "With" or "Without" switches it on, or off when it is already on there; a tag is never in both.
+    mutating func toggleIncluded(_ tag: String) {
+        excluded.removeAll { $0.caseInsensitiveCompare(tag) == .orderedSame }
+        if includes(tag) { included.removeAll { $0.caseInsensitiveCompare(tag) == .orderedSame } } else { included.append(tag) }
+    }
+
+    mutating func toggleExcluded(_ tag: String) {
+        included.removeAll { $0.caseInsensitiveCompare(tag) == .orderedSame }
+        if excludes(tag) { excluded.removeAll { $0.caseInsensitiveCompare(tag) == .orderedSame } } else { excluded.append(tag) }
+    }
+}
+
+/// A toolbar menu choosing tags an item must carry ("With") and tags it must not carry ("Without").
 struct TagFilterMenu: View {
-    @Binding var selection: String?
+    @Binding var filter: TagFilter
     let tags: [String]
 
     var body: some View {
         Menu {
-            Picker(selection: $selection) {
-                Text("All tags").tag(String?.none)
+            Button("All tags") { filter = TagFilter() }
+                .disabled(filter.isEmpty)
+            Section("With") {
                 ForEach(tags, id: \.self) { tag in
-                    Text(verbatim: tag).tag(Optional(tag))
+                    Toggle(isOn: Binding(get: { filter.includes(tag) }, set: { _ in filter.toggleIncluded(tag) })) {
+                        Text(verbatim: tag)
+                    }
                 }
-            } label: {
-                Text("Tag")
+            }
+            Section("Without") {
+                ForEach(tags, id: \.self) { tag in
+                    Toggle(isOn: Binding(get: { filter.excludes(tag) }, set: { _ in filter.toggleExcluded(tag) })) {
+                        Text(verbatim: tag)
+                    }
+                }
             }
         } label: {
-            Label("Filter by tag", systemImage: selection == nil ? "tag" : "tag.fill")
+            Label("Filter by tag", systemImage: filter.isEmpty ? "tag" : "tag.fill")
         }
     }
 

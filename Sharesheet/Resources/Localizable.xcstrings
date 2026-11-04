@@ -211,7 +211,13 @@
     "Tags" : {
       "extractionState" : "manual"
     },
-    "Tags need Apple Intelligence, which isn't available on this iPhone." : {
+    "Without Apple Intelligence, tags are matched against your tagged documents and a few common kinds." : {
+      "extractionState" : "manual"
+    },
+    "With" : {
+      "extractionState" : "manual"
+    },
+    "Without" : {
       "extractionState" : "manual"
     },
     "Text" : {

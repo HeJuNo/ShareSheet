@@ -26,8 +26,22 @@ import Testing
             .fixture(id: "Unsorted/3.md", tags: ["X", "z"], created: date(3)),
         ])
         #expect(ids(try index.search(.init(scope: .all))) == ["Unsorted/3.md", "Unsorted/2.md", "Unsorted/1.md"])
-        #expect(ids(try index.search(.init(scope: .all, tag: "x"))) == ["Unsorted/3.md", "Unsorted/1.md"])
+        #expect(ids(try index.search(.init(scope: .all, tags: ["x"]))) == ["Unsorted/3.md", "Unsorted/1.md"])
         #expect(try index.search(.init(scope: .all)).first?.tags == ["X", "z"])
+    }
+
+    @Test func severalTagsNarrowAndExcludedTagsRemove() throws {
+        let index = try LibraryIndex(path: tempDB())
+        try index.replaceAll(with: [
+            .fixture(id: "Unsorted/1.md", tags: ["Rechnung", "Strom"], created: date(1)),
+            .fixture(id: "Unsorted/2.md", tags: ["rechnung", "Gas", "Strom"], created: date(2)),
+            .fixture(id: "Unsorted/3.md", tags: ["Rechnung"], created: date(3)),
+            .fixture(id: "Unsorted/4.md", tags: [], created: date(4)),
+        ])
+        #expect(ids(try index.search(.init(scope: .all, tags: ["Rechnung", "strom"]))) == ["Unsorted/2.md", "Unsorted/1.md"])
+        #expect(ids(try index.search(.init(scope: .all, tags: ["Rechnung"], excludedTags: ["Gas"]))) == ["Unsorted/3.md", "Unsorted/1.md"])
+        #expect(ids(try index.search(.init(scope: .all, excludedTags: ["Rechnung"]))) == ["Unsorted/4.md"])
+        #expect(try index.search(.init(scope: .all, tags: ["Rechnung"], excludedTags: ["Rechnung"])).isEmpty)
     }
 
     @Test func prefixSearchWorks() throws {
@@ -287,6 +301,24 @@ import Testing
         #expect(result.frequencies["rechnung"] == 2)
         #expect(result.frequencies["vertrag"] == 1)
         #expect((result.frequencies["fehlt"] ?? 0) == 0)
+    }
+
+    @Test func taggedExamplesPairEachTagWithDocumentTextNewestFirst() throws {
+        let index = try LibraryIndex(path: tempDB())
+        try index.replaceAll(with: [
+            .fixture(id: "Unsorted/1.md", type: .document, url: nil, file: "_attachments/1.pdf", title: "1", tags: ["Rechnung", "Strom"], created: date(1)),
+            .fixture(id: "Unsorted/2.md", type: .document, url: nil, file: "_attachments/2.pdf", title: "2", tags: ["Vertrag"], created: date(2)),
+            .fixture(id: "Unsorted/3.md", type: .document, url: nil, file: "_attachments/3.pdf", title: "3", tags: [], created: date(3)),
+            .fixture(id: "Unsorted/4.md", title: "page", tags: ["Web"], created: date(4), archive: "_attachments/4.html"),
+        ])
+        try index.setAnalysis(source: "_attachments/1.pdf", text: "Rechnung Strom", keywords: [], suggestedTag: nil)
+        try index.setAnalysis(source: "_attachments/2.pdf", text: "Vertrag", keywords: [], suggestedTag: nil)
+        try index.setAnalysis(source: "_attachments/3.pdf", text: "untagged", keywords: [], suggestedTag: nil)
+        try index.setAnalysis(source: "_attachments/4.html", text: nil, keywords: [], suggestedTag: nil)
+        let examples = try index.taggedExamples(limit: 10)
+        #expect(examples.map(\.tag) == ["Vertrag", "Rechnung", "Strom"])
+        #expect(examples.map(\.text) == ["Vertrag", "Rechnung Strom", "Rechnung Strom"])
+        #expect(try index.taggedExamples(limit: 1).count == 1)
     }
 
     @Test func searchWithoutTextStaysNewestFirst() throws {

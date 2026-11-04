@@ -10,7 +10,7 @@ struct HomeView: View {
     @State private var addsItem = false
     @State private var asksCollectionName = false
     @State private var newCollectionName = ""
-    @State private var searchTag: String?
+    @State private var searchTags = TagFilter()
     @State private var collectionFailed = false
     @State private var pendingCollectionDelete: CollectionPath?
     @State private var collectionDeleteFailure: CollectionDeleteFailure?
@@ -54,12 +54,12 @@ struct HomeView: View {
             }
             .searchable(text: $searchText, prompt: Text("Search"))
             .onChange(of: searchText) { _, text in
-                if text.trimmingCharacters(in: .whitespaces).isEmpty { searchTag = nil }
+                if text.trimmingCharacters(in: .whitespaces).isEmpty { searchTags = TagFilter() }
             }
             .toolbar {
                 if let query = searchQuery {
                     ToolbarItem(placement: .topBarTrailing) {
-                        TagFilterMenu(selection: $searchTag, tags: TagFilterMenu.tags(of: model.items(untagged(query)), in: model.tags))
+                        TagFilterMenu(filter: $searchTags, tags: TagFilterMenu.tags(of: model.items(untagged(query)), in: model.tags))
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -158,12 +158,16 @@ struct HomeView: View {
     /// The search over all items, nil while the search field is empty.
     private var searchQuery: LibraryQuery? {
         let text = searchText.trimmingCharacters(in: .whitespaces)
-        return text.isEmpty ? nil : LibraryQuery(text: text, scope: .all, tag: searchTag)
+        guard !text.isEmpty else { return nil }
+        var query = LibraryQuery(text: text, scope: .all)
+        searchTags.apply(to: &query)
+        return query
     }
 
     private func untagged(_ query: LibraryQuery) -> LibraryQuery {
         var result = query
-        result.tag = nil
+        result.tags = []
+        result.excludedTags = []
         return result
     }
 

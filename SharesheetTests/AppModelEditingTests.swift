@@ -20,7 +20,7 @@ struct AppModelEditingTests {
         #expect(markdown.contains("groceries"))
         #expect(markdown.contains("billa"))
         #expect(markdown.contains("Weekly shop"))
-        #expect(model.items(LibraryQuery(scope: .all, tag: "billa")).map(\.title) == ["Receipt"])
+        #expect(model.items(LibraryQuery(scope: .all, tags: ["billa"])).map(\.title) == ["Receipt"])
         #expect(model.tags.contains("groceries"))
     }
 

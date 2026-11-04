@@ -11,12 +11,16 @@ public enum LibraryScope: Hashable, Sendable {
 public struct LibraryQuery: Sendable {
     public var text: String?
     public var scope: LibraryScope
-    public var tag: String?
+    /// Items must carry all of these tags.
+    public var tags: [String]
+    /// Items must carry none of these tags.
+    public var excludedTags: [String]
 
-    public init(text: String? = nil, scope: LibraryScope, tag: String? = nil) {
+    public init(text: String? = nil, scope: LibraryScope, tags: [String] = [], excludedTags: [String] = []) {
         self.text = text
         self.scope = scope
-        self.tag = tag
+        self.tags = tags
+        self.excludedTags = excludedTags
     }
 }
 
@@ -381,9 +385,11 @@ public final class LibraryIndex: Sendable {
                     args += [name, name.unicodeScalars.count + 1, name + "/"]
                 }
             }
-            if let tag = query.tag {
-                conditions.append("EXISTS (SELECT 1 FROM item_tags WHERE item_id = items.id AND tag = ? COLLATE NOCASE)")
-                args += [tag]
+            for (tags, exists) in [(query.tags, "EXISTS"), (query.excludedTags, "NOT EXISTS")] {
+                for tag in tags {
+                    conditions.append("\(exists) (SELECT 1 FROM item_tags WHERE item_id = items.id AND tag = ? COLLATE NOCASE)")
+                    args += [tag]
+                }
             }
             if !conditions.isEmpty { sql += " WHERE " + conditions.joined(separator: " AND ") }
             // Columns: title, note, description, url, highlights, archive_text, doc_text, keywords.
@@ -457,6 +463,19 @@ public final class LibraryIndex: Sendable {
     public func allTags() throws -> [String] {
         try pool.read { db in
             try String.fetchAll(db, sql: "SELECT tag FROM item_tags GROUP BY tag ORDER BY COUNT(*) DESC, tag")
+        }
+    }
+
+    /// One (tag, document text) pair per tag of every tagged document that has analysed text, newest first.
+    public func taggedExamples(limit: Int) throws -> [(tag: String, text: String)] {
+        try pool.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT item_tags.tag AS tag, analysis.doc_text AS text FROM items
+                JOIN item_tags ON item_tags.item_id = items.id
+                JOIN analysis ON analysis.source = items.file
+                WHERE analysis.doc_text != ''
+                ORDER BY items.created DESC, items.key DESC, item_tags.position LIMIT ?
+                """, arguments: [limit]).map { (tag: $0["tag"], text: $0["text"]) }
         }
     }
 
