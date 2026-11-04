@@ -218,12 +218,16 @@ enum AnalysisSettings {
     /// marker, and if the system then evicted the app the next launch would mark that item failed.
     func stopCaptures() async {
         analysisRequested = false
-        analysisTask?.cancel()
-        guard let task = captureTask else { return }
         captureRequested = false
-        task.cancel()
-        await task.value
+        analysisTask?.cancel()
+        captureTask?.cancel()
+        // Nothing may still be writing the index or the library when the app suspends.
+        await captureTask?.value
+        await analysisTask?.value
     }
+
+    /// True while an analysis run is going.
+    var isAnalyzing: Bool { analysisTask != nil }
 
     /// Makes every failed capture pending again, then runs the pending captures.
     func retryFailedCaptures() async {
@@ -301,15 +305,23 @@ enum AnalysisSettings {
         return try? index.analysis(forItem: id)
     }
 
-    /// Adds `tag` to the item's file in one store step, then drops the suggestion.
+    /// Adds `tag`, spelled like an existing tag when one matches, to the item's file in one store step, then
+    /// drops the suggestion (also when the item is gone or the tag is unusable).
     func acceptSuggestedTag(_ tag: String, for id: ItemID) async throws {
         let store = try requireStore()
+        guard let resolved = TagCatalog.resolve(tag, among: (try? index.allTags()) ?? []) else {
+            dismissSuggestedTag(for: id)
+            return
+        }
         do {
             let saved = try await store.modify(id) { item in
-                if !item.tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) { item.tags.append(tag) }
+                if !item.tags.contains(where: { $0.caseInsensitiveCompare(resolved) == .orderedSame }) {
+                    item.tags.append(resolved)
+                }
             }
             try? index.upsert(saved)
         } catch {
+            if case StoreError.notFound = error { dismissSuggestedTag(for: id) }
             Self.log.error("Accepting a suggested tag failed: \(error)")
             throw error
         }

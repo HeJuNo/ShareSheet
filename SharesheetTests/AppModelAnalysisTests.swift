@@ -12,6 +12,19 @@ private final class StubTagger: DocumentTagging, @unchecked Sendable {
     func tag(forText text: String, existingTags: [String]) async throws -> String? { answer }
 }
 
+/// Never answers until cancelled; reports when a call started.
+private final class SleepyTagger: DocumentTagging, @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    var hasStarted: Bool { lock.withLock { started } }
+    var isAvailable: Bool { true }
+    func tag(forText text: String, existingTags: [String]) async throws -> String? {
+        lock.withLock { started = true }
+        try await Task.sleep(for: .seconds(600))
+        return nil
+    }
+}
+
 /// Holds every capture until `release()`, then fails it.
 private final class GatedCapturer: PageCapturing, @unchecked Sendable {
     private let lock = NSLock()
@@ -163,5 +176,53 @@ struct AppModelAnalysisTests {
         #expect(AnalysisSettings.tagMode(defaults) == .automatic)
         defaults.set(false, forKey: "analyzeDocuments")
         #expect(!AnalysisSettings.isEnabled(defaults))
+    }
+
+    @Test func stoppingWaitsForARunningAnalysis() async throws {
+        let env = try ModelEnv()
+        _ = try await addPDF(env)
+        let store = env.store
+        let tagger = SleepyTagger()
+        let analyzer = DocumentAnalyzer(store: store, index: env.index, tagger: tagger, tagMode: { .suggest })
+        let model = AppModel(
+            storeFactory: { store }, index: env.index, inbox: env.inbox, runner: nil, analyzer: analyzer,
+            defaults: makeDefaults())
+        await model.refresh()
+        while !tagger.hasStarted { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(model.isAnalyzing)
+
+        await model.stopCaptures()
+
+        #expect(!model.isAnalyzing)
+    }
+
+    @Test func acceptingForAVanishedItemClearsItsSuggestion() async throws {
+        let env = try ModelEnv()
+        let item = try await addPDF(env)
+        let model = model(env, defaults: makeDefaults())
+        await model.refresh()
+        await model.analysisFinished()
+        #expect(model.analysis(for: item.id)?.suggestedTag == "Rechnung")
+        try FileManager.default.removeItem(at: env.libraryRoot.appending(path: item.id.relativePath))
+
+        await #expect(throws: StoreError.self) { try await model.acceptSuggestedTag("Rechnung", for: item.id) }
+
+        #expect(model.analysis(for: item.id)?.suggestedTag == nil)
+    }
+
+    @Test func acceptingUsesTheSpellingOfAnExistingTag() async throws {
+        let env = try ModelEnv()
+        _ = try await env.store.create(ItemDraft(type: .text, title: "Other", tags: ["Rechnung"]), in: .unsorted)
+        let item = try await addPDF(env)
+        let model = model(env, defaults: makeDefaults(), answer: "Rechnungen")
+        await model.refresh()
+        await model.analysisFinished()
+        #expect(model.analysis(for: item.id)?.suggestedTag == "Rechnung")  // resolved by the analyzer already
+        // A suggestion stored before the user's spelling existed:
+        try env.index.setSuggestedTag("Rechnungen", forItem: item.id)
+
+        try await model.acceptSuggestedTag("Rechnungen", for: item.id)
+
+        #expect(try await env.store.item(item.id).tags == ["Rechnung"])
     }
 }
