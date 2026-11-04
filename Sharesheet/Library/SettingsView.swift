@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var isRebuilding = false
+    @State private var confirmsAnalyzeAgain = false
     @AppStorage(AnalysisSettings.enabledKey) private var analyzeDocuments = true
     @AppStorage(AnalysisSettings.tagModeKey) private var tagMode = TagMode.suggest.rawValue
 
@@ -66,8 +67,16 @@ struct SettingsView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                    Button("Analyze all again") { model.analyzeAgain() }
+                    Button("Analyze all again") { confirmsAnalyzeAgain = true }
                         .disabled(!analyzeDocuments || !model.isICloudAvailable)
+                        .confirmationDialog(
+                            "Analyze all documents again?", isPresented: $confirmsAnalyzeAgain, titleVisibility: .visible
+                        ) {
+                            Button("Analyze") { model.analyzeAgain() }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("Keywords are recalculated. In automatic mode, tags you removed may be set again.")
+                        }
                 } header: {
                     Text("Documents")
                 } footer: {

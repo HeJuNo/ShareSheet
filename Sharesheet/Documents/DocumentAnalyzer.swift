@@ -52,17 +52,40 @@ actor DocumentAnalyzer {
         return analyzed
     }
 
+    /// At most this many distinct terms of a document are looked up in the index.
+    static let maxKeywordCandidates = 300
+
+    /// The `limit` terms with the highest count; ties go to the alphabetically first term.
+    static func topTerms(_ counts: [String: Int], limit: Int) -> [String: Int] {
+        guard counts.count > limit else { return counts }
+        let best = counts.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.prefix(limit)
+        return Dictionary(uniqueKeysWithValues: best.map { ($0.key, $0.value) })
+    }
+
+    /// True when `tags` already holds `tag`, or a spelling `TagCatalog` treats as the same tag.
+    static func carries(_ tags: [String], _ tag: String) -> Bool {
+        if tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) { return true }
+        if let resolved = TagCatalog.resolve(tag, among: tags), tags.contains(resolved) { return true }
+        return false
+    }
+
     /// False when the item was skipped (file not available yet, item gone) and left without an analysis row.
     private func analyze(_ candidate: AnalysisCandidate) async -> Bool {
         let text: String
         if candidate.isFile {
+            // Decide by extension before touching the store: asking for the file would start an iCloud
+            // download, and only PDFs, images and text files are read.
+            let type = UTType(filenameExtension: (candidate.source as NSString).pathExtension) ?? .data
+            guard type.conforms(to: .pdf) || type.conforms(to: .image) || type.conforms(to: .plainText) else {
+                try? index.setAnalysis(source: candidate.source, text: "", keywords: [], suggestedTag: nil)
+                return true
+            }
             let url: URL
             do {
                 url = try await store.attachmentURL(candidate.source)
             } catch {
                 return false  // downloading, not found or unreadable store: try again next run
             }
-            let type = UTType(filenameExtension: (candidate.source as NSString).pathExtension) ?? .data
             text = await DocumentTextExtractor.text(from: url, contentType: type)
         } else {
             // The archive text arrives with the capture; until then leave no row so a later run retries.
@@ -74,8 +97,12 @@ actor DocumentAnalyzer {
         // Keywords first: the document frequencies must count only the other documents.
         let counts = KeywordExtractor.termCounts(in: text)
         var keywords: [Keyword] = []
-        if !counts.isEmpty, let stats = try? index.documentFrequencies(of: Array(counts.keys)) {
-            keywords = KeywordExtractor.rank(counts: counts, documents: stats.documents, frequencies: stats.frequencies)
+        if !counts.isEmpty {
+            // One index query per term: only the most frequent terms of the document are candidates.
+            let top = Self.topTerms(counts, limit: Self.maxKeywordCandidates)
+            if let stats = try? index.documentFrequencies(of: Array(top.keys)) {
+                keywords = KeywordExtractor.rank(counts: top, documents: stats.documents, frequencies: stats.frequencies)
+            }
         }
 
         let mode = tagMode()
@@ -93,7 +120,7 @@ actor DocumentAnalyzer {
             switch mode {
             case .automatic:
                 if let updated = try? await store.modify(candidate.id, { item in
-                    if !item.tags.contains(tag) { item.tags.append(tag) }
+                    if !Self.carries(item.tags, tag) { item.tags.append(tag) }
                 }) {
                     try? index.upsert(updated)
                 }

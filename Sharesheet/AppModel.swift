@@ -64,6 +64,7 @@ enum AnalysisSettings {
     @ObservationIgnored private var captureRequested = false
     @ObservationIgnored private let analyzer: DocumentAnalyzer?
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let isForeground: @Sendable () async -> Bool
     @ObservationIgnored private var analysisTask: Task<Void, Never>?
     @ObservationIgnored private var analysisRequested = false
     @ObservationIgnored private var faviconCache: [String: Data?] = [:]
@@ -72,8 +73,10 @@ enum AnalysisSettings {
     init(
         storeFactory: @escaping () async -> (any ItemStore)?, index: LibraryIndex, inbox: Inbox,
         runner: CaptureRunner?, extensionTemporaryRoot: URL? = nil,
-        analyzer: DocumentAnalyzer? = nil, defaults: UserDefaults = .standard
+        analyzer: DocumentAnalyzer? = nil, defaults: UserDefaults = .standard,
+        isForeground: @escaping @Sendable () async -> Bool = { true }
     ) {
+        self.isForeground = isForeground
         self.analyzer = analyzer
         self.defaults = defaults
         self.storeFactory = storeFactory
@@ -105,13 +108,12 @@ enum AnalysisSettings {
     }
 
     /// For the background task: refreshes, then waits for the captures it started. Cancelling stops them.
+    /// Analysis is not awaited (and does not start in the background, see `startAnalysis`).
     func refreshAndCapture() async {
         await refresh()
         if let task = captureTask {
             await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
         }
-        guard let task = analysisTask else { return }
-        await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
 
     /// Returns when the analysis run that is going (if any) has ended.
@@ -221,7 +223,10 @@ enum AnalysisSettings {
         captureRequested = false
         analysisTask?.cancel()
         captureTask?.cancel()
-        // Nothing may still be writing the index or the library when the app suspends.
+        // Waits for the runs to notice the cancellation. The app does not wait for this before it suspends the
+        // index (`SharesheetApp` starts this in a task and calls `LibraryIndex.suspend()` right away): GRDB then
+        // refuses further access and the analyzer's index writes are `try?`, so an item in flight is simply
+        // analyzed again later.
         await captureTask?.value
         analysisRequested = false
         analysisTask?.cancel()
@@ -283,7 +288,10 @@ enum AnalysisSettings {
                 self?.analysisRequested = false
                 if let capturing = self?.captureTask { await capturing.value }
                 guard let self, !Task.isCancelled else { break }
-                if AnalysisSettings.isEnabled(self.defaults), let analyzer = self.analyzer {
+                // Only in the foreground: the background task must not wait for (or start) a long analysis.
+                if AnalysisSettings.isEnabled(self.defaults), let analyzer = self.analyzer,
+                    await self.isForeground(), !Task.isCancelled
+                {
                     _ = await analyzer.runPending()
                 }
             } while !Task.isCancelled && self?.analysisRequested == true
@@ -326,9 +334,7 @@ enum AnalysisSettings {
         }
         do {
             let saved = try await store.modify(id) { item in
-                if !item.tags.contains(where: { $0.caseInsensitiveCompare(resolved) == .orderedSame }) {
-                    item.tags.append(resolved)
-                }
+                if !DocumentAnalyzer.carries(item.tags, resolved) { item.tags.append(resolved) }
             }
             try? index.upsert(saved)
         } catch {
@@ -428,6 +434,8 @@ enum AnalysisSettings {
 
     func delete(_ id: ItemID) async throws {
         let store = try requireStore()
+        // A new file may take over the freed name, so the analysis of the old one must not outlive it.
+        let gone = try? await store.item(id)
         do {
             try await store.delete(id)
         } catch {
@@ -435,6 +443,7 @@ enum AnalysisSettings {
             throw error
         }
         try? index.remove(id)
+        if let source = gone?.file ?? gone?.archive { try? index.removeAnalysis(forSource: source) }
         reloadFromIndex()
     }
 
@@ -567,7 +576,7 @@ extension AppModel {
         return AppModel(
             storeFactory: { await library.resolve() }, index: index, inbox: inbox, runner: runner,
             extensionTemporaryRoot: AppGroup.containerURL()?.appending(path: "Tmp", directoryHint: .isDirectory),
-            analyzer: analyzer)
+            analyzer: analyzer, isForeground: { await UIApplication.shared.applicationState == .active })
     }
 
     /// The App Group index the share extension reads; a private fallback when the group is missing.
