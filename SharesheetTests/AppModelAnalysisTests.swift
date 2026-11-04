@@ -257,4 +257,13 @@ struct AppModelAnalysisTests {
         #expect(!model.isAnalyzing)
         #expect(!tagger.hasStarted)
     }
+
+    @Test func aSuggestionForATagTheItemAlreadyHasIsNotShown() {
+        let analysis: String? = "Rechnung"
+        #expect(AppModel.visibleSuggestion(analysis, itemTags: []) == "Rechnung")
+        #expect(AppModel.visibleSuggestion(analysis, itemTags: ["Steuer"]) == "Rechnung")
+        #expect(AppModel.visibleSuggestion(analysis, itemTags: ["rechnung"]) == nil)
+        #expect(AppModel.visibleSuggestion(nil, itemTags: []) == nil)
+        #expect(AppModel.visibleSuggestion(nil, itemTags: []) == nil)
+    }
 }

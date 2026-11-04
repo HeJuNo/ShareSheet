@@ -98,7 +98,9 @@ actor DocumentAnalyzer {
                     try? index.upsert(updated)
                 }
             case .suggest:
-                suggestion = tag
+                // No suggestion for a tag the item already carries.
+                let current = (try? await store.item(candidate.id))?.tags ?? []
+                if !current.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) { suggestion = tag }
             case .off:
                 break
             }

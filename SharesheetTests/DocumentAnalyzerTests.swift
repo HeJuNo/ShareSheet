@@ -136,6 +136,17 @@ struct DocumentAnalyzerTests {
         #expect(try env.index.analysis(forItem: item.id)?.suggestedTag == "Rechnung")
     }
 
+    @Test func suggestModeSuggestsNothingForATagTheItemHas() async throws {
+        let env = try ModelEnv()
+        let item = try await addPDF(env, tags: ["rechnung"])
+        let count = await analyzer(env, tagger: FakeTagger(answer: "Rechnung"), mode: .suggest).runPending()
+        #expect(count == 1)
+        let analysis = try #require(try env.index.analysis(forItem: item.id))
+        #expect(analysis.suggestedTag == nil)
+        #expect(!analysis.keywords.isEmpty)
+        #expect(try await tags(env, item) == ["rechnung"])
+    }
+
     @Test func offModeSkipsTheModelButKeepsTextAndKeywords() async throws {
         let env = try ModelEnv()
         let item = try await addPDF(env)

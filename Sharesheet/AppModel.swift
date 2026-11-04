@@ -308,6 +308,14 @@ enum AnalysisSettings {
         return try? index.analysis(forItem: id)
     }
 
+    /// The suggested tag to show, none when the item carries it already (e.g. added by hand since).
+    nonisolated static func visibleSuggestion(_ suggestion: String?, itemTags: [String]) -> String? {
+        guard let tag = suggestion,
+            !itemTags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame })
+        else { return nil }
+        return tag
+    }
+
     /// Adds `tag`, spelled like an existing tag when one matches, to the item's file in one store step, then
     /// drops the suggestion (also when the item is gone or the tag is unusable).
     func acceptSuggestedTag(_ tag: String, for id: ItemID) async throws {

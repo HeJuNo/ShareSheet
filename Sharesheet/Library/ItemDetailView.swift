@@ -138,7 +138,7 @@ struct ItemDetailView: View {
                 TagField(tags: binding(\.tags), suggestions: model.tags, pending: $pendingTag)
             }
             if let analysis = model.analysis(for: id) {
-                if let suggestion = analysis.suggestedTag {
+                if let suggestion = AppModel.visibleSuggestion(analysis.suggestedTag, itemTags: item.tags) {
                     Section {
                         HStack {
                             Text("Suggested tag")
