@@ -232,6 +232,16 @@ public final class LibraryIndex: Sendable {
         }
     }
 
+    /// Same as `setSuggestedTag(_:forSource:)`, for the source (file, else archive) of the item with this id.
+    public func setSuggestedTag(_ tag: String?, forItem id: ItemID) throws {
+        try pool.write { db in
+            try db.execute(sql: """
+                UPDATE analysis SET suggested_tag = ?
+                WHERE source = (SELECT COALESCE(file, archive) FROM items WHERE id = ?)
+                """, arguments: [tag, id.relativePath])
+        }
+    }
+
     public func clearAnalysis() throws {
         try pool.write { db in
             try db.execute(sql: "DELETE FROM analysis")

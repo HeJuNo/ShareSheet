@@ -16,6 +16,22 @@ enum AppModelError: Error, Equatable {
     case invalidCollectionName
 }
 
+/// The user's choices for document analysis, read from `UserDefaults` whenever they are needed.
+enum AnalysisSettings {
+    static let enabledKey = "analyzeDocuments"
+    static let tagModeKey = "tagMode"
+
+    /// On unless switched off.
+    static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: enabledKey) as? Bool ?? true
+    }
+
+    /// `suggest` when unset or not a known mode.
+    static func tagMode(_ defaults: UserDefaults = .standard) -> TagMode {
+        defaults.string(forKey: tagModeKey).flatMap(TagMode.init(rawValue:)) ?? .suggest
+    }
+}
+
 /// Ties the iCloud library, the index, the share inbox and the capture runner together for the UI.
 @MainActor @Observable final class AppModel {
     nonisolated private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Sharesheet", category: "Library")
@@ -46,13 +62,20 @@ enum AppModelError: Error, Equatable {
     @ObservationIgnored private var refreshWaiters: [CheckedContinuation<Void, Never>] = []
     @ObservationIgnored private var captureTask: Task<Void, Never>?
     @ObservationIgnored private var captureRequested = false
+    @ObservationIgnored private let analyzer: DocumentAnalyzer?
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var analysisTask: Task<Void, Never>?
+    @ObservationIgnored private var analysisRequested = false
     @ObservationIgnored private var faviconCache: [String: Data?] = [:]
 
     /// `extensionTemporaryRoot` is the share extension's `Tmp` folder; its leftovers older than an hour are swept.
     init(
         storeFactory: @escaping () async -> (any ItemStore)?, index: LibraryIndex, inbox: Inbox,
-        runner: CaptureRunner?, extensionTemporaryRoot: URL? = nil
+        runner: CaptureRunner?, extensionTemporaryRoot: URL? = nil,
+        analyzer: DocumentAnalyzer? = nil, defaults: UserDefaults = .standard
     ) {
+        self.analyzer = analyzer
+        self.defaults = defaults
         self.storeFactory = storeFactory
         self.index = index
         self.inbox = inbox
@@ -84,8 +107,16 @@ enum AppModelError: Error, Equatable {
     /// For the background task: refreshes, then waits for the captures it started. Cancelling stops them.
     func refreshAndCapture() async {
         await refresh()
-        guard let task = captureTask else { return }
+        if let task = captureTask {
+            await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        }
+        guard let task = analysisTask else { return }
         await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+    }
+
+    /// Returns when the analysis run that is going (if any) has ended.
+    func analysisFinished() async {
+        await analysisTask?.value
     }
 
     private func performRefresh() async {
@@ -104,6 +135,7 @@ enum AppModelError: Error, Equatable {
         }
         reloadFromIndex()
         startCaptures()
+        startAnalysis()
     }
 
     private func resolveStore() async -> (any ItemStore)? {
@@ -185,6 +217,8 @@ enum AppModelError: Error, Equatable {
     /// task. Called when the app leaves the foreground: a capture frozen at suspension would keep its attempt
     /// marker, and if the system then evicted the app the next launch would mark that item failed.
     func stopCaptures() async {
+        analysisRequested = false
+        analysisTask?.cancel()
         guard let task = captureTask else { return }
         captureRequested = false
         task.cancel()
@@ -223,7 +257,69 @@ enum AppModelError: Error, Equatable {
             } while !Task.isCancelled && self?.captureRequested == true
             self?.captureTask = nil
             self?.reloadFromIndex()
+            self?.startAnalysis()  // the pages captured now have their text in the index
         }
+    }
+
+    // MARK: Analysis
+
+    /// Analyzes new documents and pages once running captures have ended (a page is read from its archive text,
+    /// which the capture writes); a request while a run is going makes it run once more.
+    private func startAnalysis() {
+        guard analyzer != nil, isICloudAvailable else { return }
+        if analysisTask != nil {
+            analysisRequested = true
+            return
+        }
+        analysisTask = Task { [weak self] in
+            repeat {
+                self?.analysisRequested = false
+                if let capturing = self?.captureTask { await capturing.value }
+                guard let self, !Task.isCancelled else { break }
+                if AnalysisSettings.isEnabled(self.defaults), let analyzer = self.analyzer {
+                    _ = await analyzer.runPending()
+                }
+            } while !Task.isCancelled && self?.analysisRequested == true
+            self?.analysisTask = nil
+            self?.reloadFromIndex()
+        }
+    }
+
+    /// Forgets all keywords and suggestions and analyzes every document again.
+    func analyzeAgain() {
+        do {
+            try index.clearAnalysis()
+        } catch {
+            Self.log.error("Clearing the analysis failed: \(error)")
+        }
+        reloadFromIndex()
+        startAnalysis()
+    }
+
+    func analysis(for id: ItemID) -> ItemAnalysis? {
+        _ = revision
+        return try? index.analysis(forItem: id)
+    }
+
+    /// Adds `tag` to the item's file in one store step, then drops the suggestion.
+    func acceptSuggestedTag(_ tag: String, for id: ItemID) async throws {
+        let store = try requireStore()
+        do {
+            let saved = try await store.modify(id) { item in
+                if !item.tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) { item.tags.append(tag) }
+            }
+            try? index.upsert(saved)
+        } catch {
+            Self.log.error("Accepting a suggested tag failed: \(error)")
+            throw error
+        }
+        try? index.setSuggestedTag(nil, forItem: id)
+        reloadFromIndex()
+    }
+
+    func dismissSuggestedTag(for id: ItemID) {
+        try? index.setSuggestedTag(nil, forItem: id)
+        reloadFromIndex()
     }
 
     // MARK: Reading
@@ -442,9 +538,13 @@ extension AppModel {
             archiver: HTMLArchiver(fetcher: URLSessionFetcher()), favicons: FaviconFetcher(),
             embeds: URLSessionFetcher(), attemptMarker: caches.appending(path: "capture-attempt"),
             isForeground: { await UIApplication.shared.applicationState == .active })
+        let analyzer = DocumentAnalyzer(
+            store: ResolvingItemStore(library: library), index: index, tagger: FoundationModelsTagger(),
+            tagMode: { AnalysisSettings.tagMode() })
         return AppModel(
             storeFactory: { await library.resolve() }, index: index, inbox: inbox, runner: runner,
-            extensionTemporaryRoot: AppGroup.containerURL()?.appending(path: "Tmp", directoryHint: .isDirectory))
+            extensionTemporaryRoot: AppGroup.containerURL()?.appending(path: "Tmp", directoryHint: .isDirectory),
+            analyzer: analyzer)
     }
 
     /// The App Group index the share extension reads; a private fallback when the group is missing.

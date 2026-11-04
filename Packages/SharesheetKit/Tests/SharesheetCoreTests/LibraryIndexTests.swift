@@ -195,6 +195,16 @@ import Testing
         #expect(try index.analysis(forItem: ItemID(relativePath: "Unsorted/none.md")) == nil)
     }
 
+    @Test func suggestedTagCanBeClearedByItem() throws {
+        let index = try LibraryIndex(path: tempDB())
+        let id = ItemID(relativePath: "Unsorted/F.md")
+        try index.replaceAll(with: [.fixture(id: "Unsorted/F.md", type: .document, url: nil, file: "_attachments/f.pdf", title: "F")])
+        try index.setAnalysis(source: "_attachments/f.pdf", text: "x", keywords: [], suggestedTag: "Steuer")
+        try index.setSuggestedTag(nil, forItem: id)
+        #expect(try index.analysis(forItem: id)?.suggestedTag == nil)
+        #expect(try index.analysis(forItem: id) != nil)
+    }
+
     @Test func analysisForItemReturnsKeywordsInScoreOrder() throws {
         let index = try LibraryIndex(path: tempDB())
         let id = ItemID(relativePath: "Unsorted/F.md")

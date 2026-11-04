@@ -26,7 +26,7 @@ actor DocumentAnalyzer {
     }
 
     /// Analyzes every item that has no analysis yet. Returns how many were analyzed; items whose file is not on
-    /// the device yet are skipped and tried again next time. Stops between items when cancelled.
+    /// the device yet, and pages without archive text yet, are skipped and tried again next time. Stops between items when cancelled.
     func runPending() async -> Int {
         await serialized { await $0.analyzePending() }
     }
@@ -65,7 +65,9 @@ actor DocumentAnalyzer {
             let type = UTType(filenameExtension: (candidate.source as NSString).pathExtension) ?? .data
             text = await DocumentTextExtractor.text(from: url, contentType: type)
         } else {
-            text = (try? index.analysisText(forItem: candidate.id)) ?? ""
+            // The archive text arrives with the capture; until then leave no row so a later run retries.
+            guard let archiveText = try? index.analysisText(forItem: candidate.id), !archiveText.isEmpty else { return false }
+            text = archiveText
         }
         if Task.isCancelled { return false }
 

@@ -137,6 +137,39 @@ struct ItemDetailView: View {
             Section("Tags") {
                 TagField(tags: binding(\.tags), suggestions: model.tags, pending: $pendingTag)
             }
+            if let analysis = model.analysis(for: id) {
+                if let suggestion = analysis.suggestedTag {
+                    Section {
+                        HStack {
+                            Text("Suggested tag")
+                            Spacer()
+                            Button {
+                                Task { await accept(suggestion) }
+                            } label: {
+                                Text(verbatim: "+ \(suggestion)")
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(.tint.opacity(0.15), in: Capsule())
+                            }
+                            .buttonStyle(.borderless)
+                            Button {
+                                model.dismissSuggestedTag(for: id)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Dismiss")
+                        }
+                    }
+                }
+                if !analysis.keywords.isEmpty {
+                    Section("Keywords") {
+                        Text(verbatim: analysis.keywords.prefix(8).map(\.term).joined(separator: " · "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
             Section {
                 Toggle(isOn: binding(\.favorite)) {
                     Label("Favorite", systemImage: "star")
@@ -333,6 +366,22 @@ struct ItemDetailView: View {
     private func persist(_ snapshot: Item) async {
         do {
             merge(try await model.save(snapshot), since: Edits(snapshot))
+        } catch StoreError.notFound {
+            isGone = true
+            failure = .gone
+        } catch {
+            failure = .save
+        }
+    }
+
+    private func accept(_ tag: String) async {
+        saveTask?.cancel()
+        await save()
+        guard !isGone else { return }
+        do {
+            try await model.acceptSuggestedTag(tag, for: id)
+            let loaded = try await model.loadItem(id)
+            merge(loaded, since: nil)
         } catch StoreError.notFound {
             isGone = true
             failure = .gone

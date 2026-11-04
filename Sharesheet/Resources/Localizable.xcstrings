@@ -13,6 +13,12 @@
     "All tags" : {
       "extractionState" : "manual"
     },
+    "Analyze all again" : {
+      "extractionState" : "manual"
+    },
+    "Analyze documents" : {
+      "extractionState" : "manual"
+    },
     "Archive" : {
       "extractionState" : "manual"
     },
@@ -94,7 +100,13 @@
     "Delete this item?" : {
       "extractionState" : "manual"
     },
+    "Dismiss" : {
+      "extractionState" : "manual"
+    },
     "Document" : {
+      "extractionState" : "manual"
+    },
+    "Documents" : {
       "extractionState" : "manual"
     },
     "Done" : {
@@ -121,6 +133,12 @@
     "Image" : {
       "extractionState" : "manual"
     },
+    "Keywords" : {
+      "extractionState" : "manual"
+    },
+    "Keywords improve search. Tags name the kind of document, for example Invoice or Statement. Everything stays on this iPhone." : {
+      "extractionState" : "manual"
+    },
     "Link" : {
       "extractionState" : "manual"
     },
@@ -145,6 +163,9 @@
     "OK" : {
       "extractionState" : "manual"
     },
+    "Off" : {
+      "extractionState" : "manual"
+    },
     "Open in Safari" : {
       "extractionState" : "manual"
     },
@@ -157,6 +178,9 @@
     "Search" : {
       "extractionState" : "manual"
     },
+    "Set automatically" : {
+      "extractionState" : "manual"
+    },
     "Settings" : {
       "extractionState" : "manual"
     },
@@ -166,10 +190,19 @@
     "Sharesheet" : {
       "extractionState" : "manual"
     },
+    "Suggest" : {
+      "extractionState" : "manual"
+    },
+    "Suggested tag" : {
+      "extractionState" : "manual"
+    },
     "Tag" : {
       "extractionState" : "manual"
     },
     "Tags" : {
+      "extractionState" : "manual"
+    },
+    "Tags need Apple Intelligence, which isn't available on this iPhone." : {
       "extractionState" : "manual"
     },
     "Text" : {

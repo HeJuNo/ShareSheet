@@ -1,3 +1,4 @@
+import FoundationModels
 import SwiftUI
 
 /// iCloud status, index and capture maintenance, and the app version.
@@ -5,6 +6,8 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var isRebuilding = false
+    @AppStorage(AnalysisSettings.enabledKey) private var analyzeDocuments = true
+    @AppStorage(AnalysisSettings.tagModeKey) private var tagMode = TagMode.suggest.rawValue
 
     var body: some View {
         NavigationStack {
@@ -49,6 +52,26 @@ struct SettingsView: View {
                         Task { await model.retryFailedCaptures() }
                     }
                     .disabled(model.failedCaptureCount == 0 || !model.isICloudAvailable)
+                }
+                Section {
+                    Toggle("Analyze documents", isOn: $analyzeDocuments)
+                    Picker("Tags", selection: $tagMode) {
+                        Text("Off").tag(TagMode.off.rawValue)
+                        Text("Set automatically").tag(TagMode.automatic.rawValue)
+                        Text("Suggest").tag(TagMode.suggest.rawValue)
+                    }
+                    .disabled(!analyzeDocuments)
+                    if SystemLanguageModel.default.availability != .available {
+                        Text("Tags need Apple Intelligence, which isn't available on this iPhone.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("Analyze all again") { model.analyzeAgain() }
+                        .disabled(!analyzeDocuments || !model.isICloudAvailable)
+                } header: {
+                    Text("Documents")
+                } footer: {
+                    Text("Keywords improve search. Tags name the kind of document, for example Invoice or Statement. Everything stays on this iPhone.")
                 }
                 Section {
                     LabeledContent("Version", value: Self.version)

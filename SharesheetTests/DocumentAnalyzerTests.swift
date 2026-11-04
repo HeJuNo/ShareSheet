@@ -229,6 +229,23 @@ struct DocumentAnalyzerTests {
         #expect(try env.index.analysisText(forItem: item.id)?.contains("Quartalsabrechnung") == true)
     }
 
+    @Test func webItemWithoutArchiveTextIsSkippedUntilTheTextArrives() async throws {
+        let env = try ModelEnv()
+        let created = try await env.store.create(
+            ItemDraft(type: .link, url: URL(string: "https://example.com/a"), title: "Page"), in: .unsorted)
+        let item = try await env.store.modify(created.id) { $0.archive = "_attachments/page.html" }
+        try env.index.upsert(item)
+        let run = analyzer(env, tagger: FakeTagger(answer: "Abrechnung"), mode: .suggest)
+        #expect(await run.runPending() == 0)
+        #expect(try env.index.analysis(forItem: item.id) == nil)
+        try env.index.setArchiveText("", forArchive: "_attachments/page.html")
+        #expect(await run.runPending() == 0)
+        #expect(try env.index.analysis(forItem: item.id) == nil)
+        try env.index.setArchiveText("Quartalsabrechnung Hobelbank Eichenholz", forArchive: "_attachments/page.html")
+        #expect(await run.runPending() == 1)
+        #expect(try env.index.analysis(forItem: item.id)?.suggestedTag == "Abrechnung")
+    }
+
     @Test func existingTagsAreOnlyAddedToNeverReplaced() async throws {
         let env = try ModelEnv()
         let item = try await addPDF(env, tags: ["x"])
