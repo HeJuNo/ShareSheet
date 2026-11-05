@@ -50,4 +50,40 @@ import Testing
         guard case .invalid(let message) = RuleFile.load(from: root) else { Issue.record("expected .invalid"); return }
         #expect(!message.isEmpty)
     }
+
+    @Test func matchAnyIsWrittenAndAFileWithoutMatchMeansAll() throws {
+        let any = Rule(id: "a", name: "a", enabled: true, match: .any,
+                       conditions: [RuleCondition(field: .url, op: .contains, value: "x")], actions: [.addTag("t")])
+        let data = try RuleSet(rules: [any]).encoded()
+        #expect(String(decoding: data, as: UTF8.self).contains("\"match\" : \"any\""))
+        #expect(try RuleSet.decode(data).rules[0].match == .any)
+
+        let stage1 = try RuleSet.decode(try Self.examples.encoded())
+        #expect(stage1.rules.allSatisfy { $0.match == .all })
+        #expect(!String(decoding: try Self.examples.encoded(), as: UTF8.self).contains("match"))
+    }
+
+    @Test func isUsableNeedsConditionsValuesAndAnAction() {
+        let ok = RuleCondition(field: .url, op: .contains, value: "x")
+        func rule(_ c: [RuleCondition], _ a: [RuleAction]) -> Rule { Rule(id: "r", name: "r", enabled: true, conditions: c, actions: a) }
+        #expect(rule([ok], [.addTag("t")]).isUsable)
+        #expect(!rule([], [.addTag("t")]).isUsable)
+        #expect(!rule([ok, RuleCondition(field: .url, op: .contains, value: " \n ")], [.addTag("t")]).isUsable)
+        #expect(!rule([ok], []).isUsable)
+        #expect(!rule([ok], [.addTag("  "), .moveTo("")]).isUsable)
+    }
+
+    @Test func saveThenLoadRoundTripsAndBackupsAreNumbered() throws {
+        let root = try tempDir()
+        try Self.examples.encoded().write(to: root.appending(path: RuleFile.name))
+        let changed = RuleSet(rules: [Self.examples.rules[0]])
+        try RuleFile.save(changed, to: root)
+        #expect(RuleFile.load(from: root) == .rules(changed))
+
+        let first = try RuleFile.backUpBroken(in: root)
+        let second = try RuleFile.backUpBroken(in: root)
+        #expect(first.lastPathComponent == "rules.json.broken")
+        #expect(second.lastPathComponent == "rules.json.broken 2")
+        #expect(FileManager.default.fileExists(atPath: root.appending(path: RuleFile.name).path))
+    }
 }

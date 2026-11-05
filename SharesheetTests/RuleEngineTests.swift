@@ -88,6 +88,18 @@ struct RuleEngineTests {
         #expect(outcome == RuleOutcome(tags: ["phrase"], moveTo: "Sozialversicherung"))
     }
 
+    @Test func matchAnyFiresForEitherConditionAndGivesTheTagOnce() async throws {
+        let engine = try RuleEngine()
+        var any = rule("any", [RuleCondition(field: .url, op: .contains, value: "apple.com"), RuleCondition(field: .title, op: .contains, value: "apple")], [.addTag("tech")])
+        any.match = .any
+        let set = RuleSet(rules: [any])
+        func item(_ url: String, _ title: String) -> Item { Item(id: ItemID(relativePath: "Unsorted/X.md"), type: .link, url: URL(string: url)!, title: title, created: Date()) }
+        #expect(try await engine.outcome(for: set, item: item("https://apple.com", "x"), text: "").tags == ["tech"])
+        #expect(try await engine.outcome(for: set, item: item("https://a.b", "Apple news"), text: "").tags == ["tech"])
+        #expect(try await engine.outcome(for: set, item: item("https://apple.com", "apple"), text: "").tags == ["tech"])
+        #expect(try await engine.outcome(for: set, item: item("https://a.b", "x"), text: "").tags.isEmpty)
+    }
+
     @Test func noValidRuleMeansEmptyOutcome() async throws {
         let engine = try RuleEngine()
         let empty = rule("e", [], [.addTag("x")])

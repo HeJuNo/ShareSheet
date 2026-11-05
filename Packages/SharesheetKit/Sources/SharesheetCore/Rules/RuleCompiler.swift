@@ -51,47 +51,50 @@ public enum RuleCompiler {
         var inputColumns: [String: String] = [:]  // column id -> context field
         var rows: [[String: String]] = []
 
-        for rule in set.rules where rule.enabled {
-            let conditions = rule.conditions.map { ($0, RuleContext.normalized($0.value)) }
-            guard !conditions.isEmpty, conditions.allSatisfy({ !$0.1.isEmpty }) else { continue }
-            var tagValues: [String] = []
-            var move: String?
-            for action in rule.actions {
-                switch action {
-                case .addTag(let tag):
-                    let tag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !tag.isEmpty { tagValues.append(tag) }
-                case .moveTo(let collection):
-                    let collection = collection.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if move == nil, !collection.isEmpty { move = collection }
-                }
-            }
-            guard !tagValues.isEmpty || move != nil else { continue }
-
-            var row: [String: String] = ["_id": rule.id]
+        for rule in set.rules where rule.enabled && rule.isUsable {
+            // Values first (conditions, then actions), so a rule's rows can share the action values.
+            var conditionCells: [(column: String, expression: String)] = []
             var used: [RuleField: Int] = [:]
-            for (condition, value) in conditions {
+            for condition in rule.conditions {
                 let n = used[condition.field, default: 0]
                 used[condition.field] = n + 1
                 let column = "in_\(condition.field.rawValue)_\(n)"
                 inputColumns[column] = condition.field.rawValue
                 let reference = "rv[\(values.count)]"
-                values.append(value.lowercased())
+                values.append(RuleContext.normalized(condition.value).lowercased())
                 let exact = condition.op == .is && condition.field != .tag
-                row[column] = exact ? "$ == \(reference)" : "contains($, \(reference))"
+                conditionCells.append((column, exact ? "$ == \(reference)" : "contains($, \(reference))"))
             }
-            if !tagValues.isEmpty {
-                let references = tagValues.map { tag -> String in
-                    values.append(tag)
-                    return "rv[\(values.count - 1)]"
+            var tagReferences: [String] = []
+            var moveReference: String?
+            for action in rule.actions {
+                switch action {
+                case .addTag(let tag):
+                    let tag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !tag.isEmpty {
+                        tagReferences.append("rv[\(values.count)]")
+                        values.append(tag)
+                    }
+                case .moveTo(let collection):
+                    let collection = collection.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if moveReference == nil, !collection.isEmpty {
+                        moveReference = "rv[\(values.count)]"
+                        values.append(collection)
+                    }
                 }
-                row["out_addTags"] = "[" + references.joined(separator: ", ") + "]"
             }
-            if let move {
-                row["out_moveTo"] = "rv[\(values.count)]"
-                values.append(move)
+            var outputs: [String: String] = [:]
+            if !tagReferences.isEmpty { outputs["out_addTags"] = "[" + tagReferences.joined(separator: ", ") + "]" }
+            if let moveReference { outputs["out_moveTo"] = moveReference }
+
+            // "all": one row with every condition; "any": one row per condition.
+            let groups = rule.match == .all ? [conditionCells] : conditionCells.map { [$0] }
+            for (n, cells) in groups.enumerated() {
+                var row = outputs
+                row["_id"] = rule.match == .all ? rule.id : "\(rule.id)#\(n)"
+                for cell in cells { row[cell.column] = cell.expression }
+                rows.append(row)
             }
-            rows.append(row)
         }
         guard !rows.isEmpty else { return nil }
 
