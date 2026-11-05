@@ -13,12 +13,16 @@ struct ItemDetailView: View {
         var note: String
         var tags: [String]
         var favorite: Bool
+        /// The date, only when it was set by hand: an untouched date is not an edit, and a stale one must not
+        /// replace a date a rule set meanwhile.
+        var dateByHand: Date?
 
         init(_ item: Item) {
             title = item.title
             note = item.note
             tags = item.tags
             favorite = item.favorite
+            dateByHand = item.createdManual ? item.created : nil
         }
 
         func apply(to item: inout Item) {
@@ -26,6 +30,10 @@ struct ItemDetailView: View {
             item.note = note
             item.tags = tags
             item.favorite = favorite
+            if let dateByHand {
+                item.created = dateByHand
+                item.createdManual = true
+            }
         }
     }
 
@@ -289,7 +297,17 @@ struct ItemDetailView: View {
                 Text(verbatim: id.collection.components.joined(separator: " / "))
             }
             Text(verbatim: "·")
-            Text(item.created, format: .dateTime.day().month().year().hour().minute())
+            DatePicker(
+                "Date", selection: Binding(
+                    get: { self.item?.created ?? item.created },
+                    set: { new in
+                        self.item?.created = new
+                        self.item?.createdManual = true
+                    }),
+                displayedComponents: [.date, .hourAndMinute]
+            )
+            .labelsHidden()
+            .datePickerStyle(.compact)
         }
         .font(.caption)
         .foregroundStyle(.secondary)
