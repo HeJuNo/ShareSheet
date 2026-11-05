@@ -406,3 +406,44 @@ import Testing
     try index.upsert(.fixture())
     #expect(try index.search(LibraryQuery(scope: .all)).count == 1)
 }
+
+@Suite struct LibraryIndexFieldTests {
+    private func item(_ id: String, tags: [String] = [], _ fields: [String: FieldValue]) -> Item {
+        var item = Item.fixture(id: id, tags: tags)
+        item.fields = fields
+        return item
+    }
+
+    @Test func sumsCoverOnlyNumberFieldsOfTheListedItems() throws {
+        let index = try LibraryIndex(path: tempDB())
+        try index.replaceAll(with: [
+            item("Rechnungen/1.md", tags: ["tesla"], ["Betrag": .number(4.77), "Menge": .number(12.5)]),
+            item("Rechnungen/2.md", tags: ["tesla"], ["Betrag": .number(10)]),
+            item("Rechnungen/3.md", ["Betrag": .text("n/a")]),
+            item("Unsorted/4.md", tags: ["tesla"], [:]),
+            item("Unsorted/5.md", ["Betrag": .number(100)]),
+        ])
+        let all = try index.fieldSums(.init(scope: .collection(CollectionPath(components: ["Rechnungen"]))))
+        #expect(all == [FieldSum(name: "Betrag", total: 14.77, count: 2), FieldSum(name: "Menge", total: 12.5, count: 1)])
+        let tagged = try index.fieldSums(.init(scope: .all, tags: ["tesla"]))
+        #expect(tagged.first { $0.name == "Betrag" }?.count == 2)
+        #expect(try index.fieldSums(.init(scope: .all, tags: ["none"])).isEmpty)
+    }
+
+    @Test func upsertReplacesAnItemsFieldsAndRemoveDropsThem() throws {
+        let index = try LibraryIndex(path: tempDB())
+        try index.upsert(item("Unsorted/1.md", ["Betrag": .number(1)]))
+        try index.upsert(item("Unsorted/1.md", ["Menge": .number(2)]))
+        #expect(try index.fieldSums(.init(scope: .all)) == [FieldSum(name: "Menge", total: 2, count: 1)])
+        try index.remove(ItemID(relativePath: "Unsorted/1.md"))
+        #expect(try index.fieldSums(.init(scope: .all)).isEmpty)
+    }
+
+    @Test func textSearchStillNarrowsTheSums() throws {
+        let index = try LibraryIndex(path: tempDB())
+        var a = item("Unsorted/1.md", ["Betrag": .number(1)])
+        a.title = "Tesla Ladung"
+        try index.replaceAll(with: [a, item("Unsorted/2.md", ["Betrag": .number(5)])])
+        #expect(try index.fieldSums(.init(text: "Tesla", scope: .all)) == [FieldSum(name: "Betrag", total: 1, count: 1)])
+    }
+}

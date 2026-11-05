@@ -56,6 +56,19 @@ public struct IndexedItem: Identifiable, Equatable, Sendable {
     }
 }
 
+/// The sum of a number field over the items of a query that have it.
+public struct FieldSum: Equatable, Sendable {
+    public var name: String
+    public var total: Double
+    public var count: Int
+
+    public init(name: String, total: Double, count: Int) {
+        self.name = name
+        self.total = total
+        self.count = count
+    }
+}
+
 public struct LibraryCounts: Equatable, Sendable {
     public var all = 0, unsorted = 0, favorites = 0, highlights = 0
     public var byType: [ItemType: Int] = [:]
@@ -182,6 +195,18 @@ public final class LibraryIndex: Sendable {
             }
             for key in try Int64.fetchAll(db, sql: "SELECT key FROM items") { try refreshFTS(key: key, db) }
         }
+        migrator.registerMigration("v3") { db in
+            try db.create(table: "item_fields") { t in
+                t.column("item_id", .text).notNull()
+                t.column("name", .text).notNull()
+                t.column("type", .text).notNull()
+                t.column("text", .text)
+                t.column("number", .double)
+                t.column("date", .double)
+            }
+            try db.create(index: "item_fields_item", on: "item_fields", columns: ["item_id"])
+            try db.create(index: "item_fields_name", on: "item_fields", columns: ["name"])
+        }
         return migrator
     }
 
@@ -191,6 +216,7 @@ public final class LibraryIndex: Sendable {
         try pool.write { db in
             try db.execute(sql: "DELETE FROM items_fts")
             try db.execute(sql: "DELETE FROM item_tags")
+            try db.execute(sql: "DELETE FROM item_fields")
             try db.execute(sql: "DELETE FROM items")
             for item in items { try Self.insert(item, db) }
             // Analysis of files and pages that no item has any more (deleted here or on another device).
@@ -356,41 +382,11 @@ public final class LibraryIndex: Sendable {
 
     public func search(_ query: LibraryQuery) throws -> [IndexedItem] {
         try pool.read { db in
-            var sql = "SELECT items.* FROM items"
-            var conditions: [String] = []
-            var args = StatementArguments()
-
-            let match = Self.ftsExpression(query.text)
-            let hasText = match != nil
-            if let match {
-                sql += " JOIN items_fts ON items_fts.rowid = items.key"
-                conditions.append("items_fts MATCH ?")
-                args += [match]
-            }
-            switch query.scope {
-            case .all: break
-            case .unsorted:
-                conditions.append("items.collection = ?")
-                args += [CollectionPath.unsorted.relativePath]
-            case .favorites: conditions.append("items.favorite = 1")
-            case .highlights: conditions.append("items.has_highlights = 1")
-            case .type(let type):
-                conditions.append("items.type = ?")
-                args += [type.rawValue]
-            case .collection(let path):
-                if !path.components.isEmpty {
-                    let name = path.relativePath
-                    conditions.append("(items.collection = ? OR substr(items.collection, 1, ?) = ?)")
-                    // SQLite substr counts code points, not grapheme clusters.
-                    args += [name, name.unicodeScalars.count + 1, name + "/"]
-                }
-            }
-            for (tags, exists) in [(query.tags, "EXISTS"), (query.excludedTags, "NOT EXISTS")] {
-                for tag in tags {
-                    conditions.append("\(exists) (SELECT 1 FROM item_tags WHERE item_id = items.id AND tag = ? COLLATE NOCASE)")
-                    args += [tag]
-                }
-            }
+            let filter = Self.filter(for: query)
+            var sql = "SELECT items.* FROM items" + filter.join
+            let args = filter.args
+            let hasText = filter.hasText
+            let conditions = filter.conditions
             if !conditions.isEmpty { sql += " WHERE " + conditions.joined(separator: " AND ") }
             // Columns: title, note, description, url, highlights, archive_text, doc_text, keywords.
             sql += hasText
@@ -414,6 +410,58 @@ public final class LibraryIndex: Sendable {
                     capture: (row["capture"] as String?).flatMap { CaptureState(rawValue: $0) },
                     favorite: row["favorite"],
                     hasHighlights: row["has_highlights"])
+            }
+        }
+    }
+
+    /// The join, conditions and arguments that narrow `items` to a query; shared by `search` and `fieldSums`.
+    private static func filter(for query: LibraryQuery) -> (join: String, conditions: [String], args: StatementArguments, hasText: Bool) {
+        var join = ""
+        var conditions: [String] = []
+        var args = StatementArguments()
+        let match = ftsExpression(query.text)
+        if let match {
+            join += " JOIN items_fts ON items_fts.rowid = items.key"
+            conditions.append("items_fts MATCH ?")
+            args += [match]
+        }
+        switch query.scope {
+        case .all: break
+        case .unsorted:
+            conditions.append("items.collection = ?")
+            args += [CollectionPath.unsorted.relativePath]
+        case .favorites: conditions.append("items.favorite = 1")
+        case .highlights: conditions.append("items.has_highlights = 1")
+        case .type(let type):
+            conditions.append("items.type = ?")
+            args += [type.rawValue]
+        case .collection(let path):
+            if !path.components.isEmpty {
+                let name = path.relativePath
+                conditions.append("(items.collection = ? OR substr(items.collection, 1, ?) = ?)")
+                // SQLite substr counts code points, not grapheme clusters.
+                args += [name, name.unicodeScalars.count + 1, name + "/"]
+            }
+        }
+        for (tags, exists) in [(query.tags, "EXISTS"), (query.excludedTags, "NOT EXISTS")] {
+            for tag in tags {
+                conditions.append("\(exists) (SELECT 1 FROM item_tags WHERE item_id = items.id AND tag = ? COLLATE NOCASE)")
+                args += [tag]
+            }
+        }
+        return (join, conditions, args, match != nil)
+    }
+
+    public func fieldSums(_ query: LibraryQuery) throws -> [FieldSum] {
+        try pool.read { db in
+            let filter = Self.filter(for: query)
+            var sql = """
+                SELECT item_fields.name AS name, SUM(item_fields.number) AS total, COUNT(*) AS count FROM items
+                """ + filter.join + " JOIN item_fields ON item_fields.item_id = items.id AND item_fields.type = 'number'"
+            if !filter.conditions.isEmpty { sql += " WHERE " + filter.conditions.joined(separator: " AND ") }
+            sql += " GROUP BY item_fields.name ORDER BY item_fields.name"
+            return try Row.fetchAll(db, sql: sql, arguments: filter.args).map {
+                FieldSum(name: $0["name"], total: $0["total"], count: $0["count"])
             }
         }
     }
@@ -507,6 +555,16 @@ public final class LibraryIndex: Sendable {
             try db.execute(
                 sql: "INSERT INTO item_tags(item_id, tag, position) VALUES (?, ?, ?)", arguments: [id, tag, position])
         }
+        for (name, value) in item.fields {
+            let (type, text, number, date): (String, String?, Double?, Double?) = switch value {
+            case .number(let number): ("number", nil, number, nil)
+            case .date(let date): ("date", nil, nil, date.timeIntervalSince1970)
+            case .text(let text): ("text", text, nil, nil)
+            }
+            try db.execute(
+                sql: "INSERT INTO item_fields(item_id, name, type, text, number, date) VALUES (?, ?, ?, ?, ?, ?)",
+                arguments: [id, name, type, text, number, date])
+        }
         try refreshFTS(key: key, db)
     }
 
@@ -515,6 +573,7 @@ public final class LibraryIndex: Sendable {
             try db.execute(sql: "DELETE FROM items_fts WHERE rowid = ?", arguments: [key])
         }
         try db.execute(sql: "DELETE FROM item_tags WHERE item_id = ?", arguments: [id.relativePath])
+        try db.execute(sql: "DELETE FROM item_fields WHERE item_id = ?", arguments: [id.relativePath])
         try db.execute(sql: "DELETE FROM items WHERE id = ?", arguments: [id.relativePath])
     }
 
