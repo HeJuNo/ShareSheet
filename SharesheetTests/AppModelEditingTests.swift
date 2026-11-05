@@ -25,6 +25,27 @@ struct AppModelEditingTests {
         #expect(try await env.store.listItems().isEmpty)
     }
 
+    @Test func aHandSetDateIsSavedAndAnUntouchedOneIsNot() async throws {
+        let env = try ModelEnv()
+        let created = try await env.store.create(ItemDraft(type: .text, title: "Receipt"), in: .unsorted)
+        let model = env.model()
+        await model.refresh()
+        let original = created.created
+        let byHand = Date(timeIntervalSince1970: 1_700_000_000)
+
+        var stale = try await model.loadItem(created.id)
+        stale.created = byHand  // changed, but not marked: another writer's date must not be overwritten
+        stale.note = "n"
+        _ = try await model.save(stale)
+        #expect(try await env.store.item(created.id).created == original)
+
+        stale.createdManual = true
+        let saved = try await model.save(stale)
+        #expect(saved.created == byHand && saved.createdManual)
+        #expect(try await env.store.item(created.id).created == byHand)
+        #expect(model.items(LibraryQuery(scope: .all)).first?.created == byHand)
+    }
+
     @Test func redirectsFollowSeveralMovesAndStopAtLoops() {
         let redirects = MoveRedirects()
         let a = ItemID(relativePath: "A/1.md"), b = ItemID(relativePath: "B/1.md"), c = ItemID(relativePath: "C/1.md")

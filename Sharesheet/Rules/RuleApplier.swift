@@ -6,12 +6,15 @@ import SharesheetCore
 struct RulePlan: Equatable, Sendable {
     var tags: [String]
     var moveTo: CollectionPath?
+    /// A new `created` read from the text; never set for an item whose date was set by hand.
+    var date: Date? = nil
 }
 
 struct RulePreview: Equatable, Sendable {
     var items: Int
     var tagsAdded: Int
     var moved: Int
+    var dates = 0
 }
 
 protocol RuleApplying: Sendable {
@@ -74,7 +77,12 @@ actor RuleApplier: RuleApplying {
         {
             move = path
         }
-        return tags.isEmpty && move == nil ? nil : RulePlan(tags: tags, moveTo: move)
+        var date: Date?
+        if !item.createdManual {
+            date = outcome.datePatterns.lazy.compactMap { DateExtractor.date(in: text, pattern: $0) }.first
+            if let found = date, abs(found.timeIntervalSince(item.created)) < 1 { date = nil }  // already that date
+        }
+        return tags.isEmpty && move == nil && date == nil ? nil : RulePlan(tags: tags, moveTo: move, date: date)
     }
 
     /// Counts what `applyAll` would change for `ids`; writes nothing.
@@ -86,6 +94,7 @@ actor RuleApplier: RuleApplying {
             preview.items += 1
             preview.tagsAdded += plan.tags.count
             if plan.moveTo != nil { preview.moved += 1 }
+            if plan.date != nil { preview.dates += 1 }
         }
         return preview
     }
@@ -107,10 +116,11 @@ actor RuleApplier: RuleApplying {
     private func write(_ plan: RulePlan, to id: ItemID) async {
         var current = id
         do {
-            if !plan.tags.isEmpty {
-                let tags = plan.tags
+            if !plan.tags.isEmpty || plan.date != nil {
+                let (tags, date) = (plan.tags, plan.date)
                 let saved = try await store.modify(current) { item in
                     for tag in tags where !DocumentAnalyzer.carries(item.tags, tag) { item.tags.append(tag) }
+                    if let date, !item.createdManual { item.created = date }
                 }
                 try? index.upsert(saved)
             }

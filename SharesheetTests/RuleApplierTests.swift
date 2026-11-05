@@ -113,6 +113,71 @@ struct RuleApplierTests {
         #expect(try await env.store.item(c.id).tags.isEmpty)
     }
 
+    // MARK: Date from text
+
+    private let pattern = "Ihr Einkauf am {Datum} um {Uhrzeit} Uhr"
+    private var einkauf: [RuleCondition] { [RuleCondition(field: .text, op: .contains, value: "einkauf")] }
+
+    private func expected(_ y: Int, _ m: Int, _ d: Int, _ h: Int, _ min: Int) -> Date {
+        Calendar(identifier: .gregorian).date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: min))!
+    }
+
+    @Test func theDateComesFromTheTextAndASecondRunChangesNothing() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: "Rechnung\nIhr Einkauf am 02.11.2026 um 15:08 Uhr\nDanke")
+        let applier = try applier(env, [rule(einkauf, [.setDate(pattern)])])
+        await applier.apply(to: item.id)
+        let saved = try await env.store.item(item.id)
+        #expect(saved.created == expected(2026, 11, 2, 15, 8))
+        #expect(!saved.createdManual)
+        #expect(try env.index.search(LibraryQuery(scope: .all)).first?.created == saved.created)
+        #expect(await applier.plan(for: item.id) == nil)
+    }
+
+    @Test func aHandSetDateIsNeverChangedByARule() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: "Ihr Einkauf am 02.11.2026 um 15:08 Uhr")
+        let byHand = Date(timeIntervalSince1970: 1_700_000_000)
+        _ = try await env.store.modify(item.id) { $0.created = byHand; $0.createdManual = true }
+        let applier = try applier(env, [rule(einkauf, [.setDate(pattern)])])
+        #expect(await applier.plan(for: item.id) == nil)
+        await applier.apply(to: item.id)
+        #expect(try await env.store.item(item.id).created == byHand)
+        let ids = [item.id]
+        #expect(await applier.preview(ids: ids) == RulePreview(items: 0, tagsAdded: 0, moved: 0))
+    }
+
+    @Test func impossibleDatesAndMissingTextChangeNothing() async throws {
+        let env = try ModelEnv()
+        let impossible = try await addDocument(env, text: "Ihr Einkauf am 31.02.2026 um 15:08 Uhr")
+        let none = try await addDocument(env, text: "Einkauf ohne Datum")
+        let applier = try applier(env, [rule(einkauf, [.setDate(pattern)])])
+        #expect(await applier.plan(for: impossible.id) == nil)
+        #expect(await applier.plan(for: none.id) == nil)
+    }
+
+    @Test func theFirstPatternThatFindsADateWins() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: "Bestellt am 05.12.2026 Einkauf am 02.11.2026")
+        let applier = try applier(env, [
+            rule(einkauf, [.setDate("Ihr Einkauf am {Datum}")]),  // no match here
+            rule(einkauf, [.setDate("Einkauf am {Datum}")]),
+            rule(einkauf, [.setDate("Bestellt am {Datum}")]),
+        ])
+        #expect(await applier.plan(for: item.id)?.date == expected(2026, 11, 2, 0, 0))
+    }
+
+    @Test func dateTagAndMoveAreWrittenTogetherAndPreviewCountsTheDate() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: "Ihr Einkauf am 02.11.2026 um 15:08 Uhr")
+        let applier = try applier(env, [rule(einkauf, [.setDate(pattern), .addTag("Einkauf"), .moveTo("Belege")])])
+        #expect(await applier.preview(ids: [item.id]) == RulePreview(items: 1, tagsAdded: 1, moved: 1, dates: 1))
+        await applier.apply(to: item.id)
+        let moved = try #require(try await env.store.listItems().first)
+        #expect(moved.id.collection == CollectionPath(components: ["Belege"]))
+        #expect(moved.tags == ["Einkauf"] && moved.created == expected(2026, 11, 2, 15, 8))
+    }
+
     @Test func aMoveIsRecordedSoOpenScreensCanFollow() async throws {
         let env = try ModelEnv()
         let item = try await addDocument(env, text: "SVS Kontoauszug")

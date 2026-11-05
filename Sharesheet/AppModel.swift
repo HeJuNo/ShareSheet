@@ -419,11 +419,18 @@ enum AnalysisSettings {
         let saved: Item
         do {
             let (title, note, tags, favorite) = (item.title, item.note, item.tags, item.favorite)
+            // The date is written only when it was set by hand, so a screen holding an old date cannot undo a
+            // date a rule set meanwhile.
+            let (created, byHand) = (item.created, item.createdManual)
             saved = try await store.modify(redirects.current(item.id)) {
                 $0.title = title
                 $0.note = note
                 $0.tags = tags
                 $0.favorite = favorite
+                if byHand {
+                    $0.created = created
+                    $0.createdManual = true
+                }
             }
         } catch {
             Self.log.error("Saving an item failed: \(error)")
