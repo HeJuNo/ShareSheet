@@ -5,7 +5,8 @@ import Foundation
 /// `{Uhrzeit}` is hour:minute or hour.minute with optional seconds. The other text must match as written,
 /// except that spacing and line breaks may differ and case does not matter.
 public enum DateExtractor {
-    private static let datum = #"(?<!\d)(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})(?!\d)"#
+    // Six groups: year/month/day (`2026/02/22`, `2026-02-22`) or day/month/year (`02.11.2026`, `2.11.26`).
+    private static let datum = #"(?<!\d)(?:(\d{4})[/-](\d{1,2})[/-](\d{1,2})|(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2}))(?!\d)"#
     private static let uhrzeit = #"(?<!\d)(\d{1,2})[:.](\d{2})(?::(\d{2}))?(?!\d)"#
 
     private enum Placeholder { case date, time }
@@ -50,12 +51,19 @@ public enum DateExtractor {
         for placeholder in order {
             switch placeholder {
             case .date:
-                guard let day = number(group), let month = number(group + 1), var year = number(group + 2) else { return nil }
+                var year: Int, month: Int, day: Int
+                if let y = number(group), let m = number(group + 1), let d = number(group + 2) {
+                    (year, month, day) = (y, m, d)
+                } else if let d = number(group + 3), let m = number(group + 4), let y = number(group + 5) {
+                    (year, month, day) = (y, m, d)
+                } else {
+                    return nil
+                }
                 if year < 100 { year += 2000 }
                 components.year = year
                 components.month = month
                 components.day = day
-                group += 3
+                group += 6
             case .time:
                 guard let hour = number(group), let minute = number(group + 1) else { return nil }
                 components.hour = hour
@@ -95,7 +103,7 @@ public enum DateExtractor {
     }
 
     /// Text as written, with any run of spacing matching any run of spacing in the document.
-    private static func literalExpression(_ literal: String) -> String {
+    static func literalExpression(_ literal: String) -> String {
         var expression = ""
         var inSpace = false
         for character in literal {

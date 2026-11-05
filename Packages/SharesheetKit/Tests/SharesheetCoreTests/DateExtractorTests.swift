@@ -64,3 +64,15 @@ import Testing
         #expect(DateExtractor.date(in: "02.11.2026", pattern: "{Datum} {Datum}", timeZone: vienna) == nil)
     }
 }
+
+@Suite struct DateExtractorSlashAndIsoTests {
+    @Test func yearFirstFormatsAreRead() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/Vienna")!
+        let expected = calendar.date(from: DateComponents(year: 2026, month: 2, day: 22))!
+        for text in ["Rechnungsdatum 2026/02/22", "Rechnungsdatum 2026-02-22"] {
+            #expect(DateExtractor.date(in: text, pattern: "Rechnungsdatum {Datum}", timeZone: calendar.timeZone) == expected)
+        }
+        #expect(DateExtractor.date(in: "Rechnungsdatum 2026/13/22", pattern: "Rechnungsdatum {Datum}") == nil)
+    }
+}
