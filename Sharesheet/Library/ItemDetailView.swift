@@ -16,8 +16,11 @@ struct ItemDetailView: View {
         /// The date, only when it was set by hand: an untouched date is not an edit, and a stale one must not
         /// replace a date a rule set meanwhile.
         var dateByHand: Date?
+        /// True once the title was edited by hand; rules then leave it alone.
+        var titleByHand: Bool
 
         init(_ item: Item) {
+            titleByHand = item.titleManual
             title = item.title
             note = item.note
             tags = item.tags
@@ -27,6 +30,7 @@ struct ItemDetailView: View {
 
         func apply(to item: inout Item) {
             item.title = title
+            if titleByHand { item.titleManual = true }
             item.note = note
             item.tags = tags
             item.favorite = favorite
@@ -131,9 +135,20 @@ struct ItemDetailView: View {
             Section {
                 header(item)
                     .listRowInsets(EdgeInsets())
-                TextField("Title", text: binding(\.title), axis: .vertical)
+                TextField("Title", text: titleBinding, axis: .vertical)
                     .font(.title3.bold())
                 metadata(item)
+            }
+            if !item.fields.isEmpty {
+                Section("Fields") {
+                    ForEach(item.fields.keys.sorted(), id: \.self) { name in
+                        LabeledContent {
+                            Text(verbatim: Self.display(item.fields[name]!))
+                        } label: {
+                            Text(verbatim: name)
+                        }
+                    }
+                }
             }
             if item.capture == .failed, item.screenshot != nil {
                 Section { retryRow }
@@ -318,6 +333,25 @@ struct ItemDetailView: View {
         guard var host = url?.host(), !host.isEmpty else { return nil }
         if host.hasPrefix("www.") { host.removeFirst(4) }
         return host
+    }
+
+    /// Editing the title marks it as set by hand.
+    private var titleBinding: Binding<String> {
+        Binding(
+            get: { item?.title ?? "" },
+            set: { new in
+                guard item?.title != new else { return }
+                item?.title = new
+                item?.titleManual = true
+            })
+    }
+
+    private static func display(_ value: FieldValue) -> String {
+        switch value {
+        case .number(let number): number.formatted(.number.precision(.fractionLength(0...6)))
+        case .date(let date): date.formatted(date: .abbreviated, time: .omitted)
+        case .text(let text): text
+        }
     }
 
     private func binding<Value>(_ keyPath: WritableKeyPath<Item, Value>) -> Binding<Value> {

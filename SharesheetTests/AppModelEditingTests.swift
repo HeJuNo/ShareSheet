@@ -261,3 +261,39 @@ private struct CaptureAfterReadStore: ItemStore {
     }
     func changes() -> AsyncStream<Void> { base.changes() }
 }
+
+@MainActor
+@Suite(.timeLimit(.minutes(1)))
+struct AppModelTitleAndSumsTests {
+    @Test func aHandSetTitleIsWrittenAndMarked() async throws {
+        let env = try ModelEnv()
+        let model = env.model()
+        await model.refresh()
+        let item = try await env.store.create(ItemDraft(type: .text, title: "Auto", content: "x"), in: .unsorted)
+        var edited = item
+        edited.title = "Mein Titel"
+        edited.titleManual = true
+        let saved = try await model.save(edited)
+        #expect(saved.title == "Mein Titel" && saved.titleManual)
+    }
+
+    @Test func theModelSumsNumberFieldsOfTheListedItems() async throws {
+        let env = try ModelEnv()
+        let model = env.model()
+        await model.refresh()
+        for amount in [4.5, 5.5] {
+            var item = try await env.store.create(ItemDraft(type: .text, title: "R", content: "x"), in: .unsorted)
+            item = try await env.store.modify(item.id) { $0.fields = ["Betrag": .number(amount)] }
+            try env.index.upsert(item)
+        }
+        #expect(model.fieldSums(LibraryQuery(scope: .all)) == [FieldSum(name: "Betrag", total: 10, count: 2)])
+    }
+
+    @Test func anUntouchedTitleIsNotMarkedAsHandSet() async throws {
+        let env = try ModelEnv()
+        let model = env.model()
+        await model.refresh()
+        let item = try await env.store.create(ItemDraft(type: .text, title: "Auto", content: "x"), in: .unsorted)
+        #expect(try await model.save(item).titleManual == false)
+    }
+}

@@ -381,6 +381,12 @@ enum AnalysisSettings {
         }
     }
 
+    /// The sums of the number fields over the items of `query`, for the footer of a list.
+    func fieldSums(_ query: LibraryQuery) -> [FieldSum] {
+        _ = revision
+        return (try? index.fieldSums(query)) ?? []
+    }
+
     /// Favicons are stored by full host (`www.` included), as the capture runner saves them.
     func favicon(for item: IndexedItem) -> Data? {
         guard let host = item.url?.host(), !host.isEmpty else { return nil }
@@ -421,9 +427,10 @@ enum AnalysisSettings {
             let (title, note, tags, favorite) = (item.title, item.note, item.tags, item.favorite)
             // The date is written only when it was set by hand, so a screen holding an old date cannot undo a
             // date a rule set meanwhile.
-            let (created, byHand) = (item.created, item.createdManual)
+            let (created, byHand, titleByHand) = (item.created, item.createdManual, item.titleManual)
             saved = try await store.modify(redirects.current(item.id)) {
                 $0.title = title
+                if titleByHand { $0.titleManual = true }
                 $0.note = note
                 $0.tags = tags
                 $0.favorite = favorite

@@ -157,6 +157,7 @@ struct ItemResults: View {
             }
         }
         .listStyle(.plain)
+        .safeAreaInset(edge: .bottom) { FieldSumsBar(sums: model.fieldSums(query)) }
         .overlay {
             if items.isEmpty {
                 if let text = query.text {
@@ -188,6 +189,27 @@ struct ItemResults: View {
     private func delete(_ item: IndexedItem) {
         Task {
             do { try await model.delete(item) } catch { failure = .delete }
+        }
+    }
+}
+
+/// One line per number field of the listed items: its sum and how many items have it.
+struct FieldSumsBar: View {
+    let sums: [FieldSum]
+
+    var body: some View {
+        if !sums.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(sums, id: \.name) { sum in
+                    let total = sum.total.formatted(.number.precision(.fractionLength(0...2)))
+                    Text(verbatim: "\(sum.name): \(total) (\(sum.count))")
+                        .font(.footnote.monospacedDigit())
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(.bar)
         }
     }
 }
