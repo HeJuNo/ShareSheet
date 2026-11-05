@@ -68,6 +68,8 @@ enum AnalysisSettings {
     /// Where rules moved items to; the detail screen still holds the id from before.
     @ObservationIgnored private let redirects: MoveRedirects
     let rulesStatus: RulesStatus
+    @ObservationIgnored private let ruleApplier: RuleApplier?
+    @ObservationIgnored private let rulesRoot: () async -> URL?
     @ObservationIgnored private var analysisTask: Task<Void, Never>?
     @ObservationIgnored private var analysisRequested = false
     @ObservationIgnored private var faviconCache: [String: Data?] = [:]
@@ -78,8 +80,11 @@ enum AnalysisSettings {
         runner: CaptureRunner?, extensionTemporaryRoot: URL? = nil,
         analyzer: DocumentAnalyzer? = nil, defaults: UserDefaults = .standard,
         isForeground: @escaping @Sendable () async -> Bool = { true },
-        redirects: MoveRedirects = MoveRedirects(), rulesStatus: RulesStatus = RulesStatus()
+        redirects: MoveRedirects = MoveRedirects(), rulesStatus: RulesStatus = RulesStatus(),
+        ruleApplier: RuleApplier? = nil, rulesRoot: @escaping () async -> URL? = { await ICloudLocator.libraryRoot() }
     ) {
+        self.ruleApplier = ruleApplier
+        self.rulesRoot = rulesRoot
         self.redirects = redirects
         self.rulesStatus = rulesStatus
         self.isForeground = isForeground
@@ -90,6 +95,13 @@ enum AnalysisSettings {
         self.inbox = inbox
         self.runner = runner
         self.extensionTemporaryRoot = extensionTemporaryRoot
+    }
+
+    /// The rules editor's model on this library.
+    func makeRulesModel() -> RulesModel {
+        RulesModel(
+            root: rulesRoot, applier: ruleApplier,
+            itemIDs: { [index] in ((try? index.search(LibraryQuery(scope: .all))) ?? []).map(\.id) })
     }
 
     // MARK: Refresh
@@ -571,7 +583,7 @@ extension AppModel {
     /// A missing or broken file means no rules.
     private static func liveRules(
         library: ICloudLibrary, index: LibraryIndex, redirects: MoveRedirects, status: RulesStatus
-    ) -> (any RuleApplying)? {
+    ) -> RuleApplier? {
         guard let engine = try? RuleEngine() else { return nil }
         return RuleApplier(
             store: ResolvingItemStore(library: library), index: index, redirects: redirects,
@@ -602,7 +614,7 @@ extension AppModel {
             storeFactory: { await library.resolve() }, index: index, inbox: inbox, runner: runner,
             extensionTemporaryRoot: AppGroup.containerURL()?.appending(path: "Tmp", directoryHint: .isDirectory),
             analyzer: analyzer, isForeground: { await UIApplication.shared.applicationState == .active },
-            redirects: redirects, rulesStatus: rulesStatus)
+            redirects: redirects, rulesStatus: rulesStatus, ruleApplier: rules)
     }
 
     /// The App Group index the share extension reads; a private fallback when the group is missing.
