@@ -2,6 +2,18 @@ import Foundation
 import OSLog
 import SharesheetCore
 
+/// What the rules would change for one item: tags it does not carry yet, and the collection to move it to.
+struct RulePlan: Equatable, Sendable {
+    var tags: [String]
+    var moveTo: CollectionPath?
+}
+
+struct RulePreview: Equatable, Sendable {
+    var items: Int
+    var tagsAdded: Int
+    var moved: Int
+}
+
 protocol RuleApplying: Sendable {
     /// Applies the rules to one item. Never throws: a failing rule run must not hold up capture or analysis.
     func apply(to id: ItemID) async
@@ -32,30 +44,77 @@ actor RuleApplier: RuleApplying {
     }
 
     func apply(to id: ItemID) async {
+        guard let plan = await plan(for: id) else { return }
+        await write(plan, to: id)
+    }
+
+    /// What the rules would change for this item, without changing it. Nil when nothing would change, there are
+    /// no rules, the item is gone, or the evaluation failed.
+    func plan(for id: ItemID) async -> RulePlan? {
         let set = await rules()
-        guard !set.rules.isEmpty, let item = try? await store.item(id) else { return }
+        guard !set.rules.isEmpty, let item = try? await store.item(id) else { return nil }
         let text = (try? index.analysisText(forItem: id)) ?? ""
         let outcome: RuleOutcome
         do {
             outcome = try await evaluate(set, item, text)
         } catch {
             Self.log.error("Evaluating the rules failed: \(error)")
-            return
+            return nil
         }
-
-        var current = id
         let existing = (try? index.allTags()) ?? []
-        let tags = outcome.tags.compactMap { TagCatalog.resolve($0, among: existing) }
+        var tags: [String] = []
+        for name in outcome.tags {
+            if let tag = TagCatalog.resolve(name, among: existing), !DocumentAnalyzer.carries(item.tags + tags, tag) {
+                tags.append(tag)
+            }
+        }
+        var move: CollectionPath?
+        if let target = outcome.moveTo, id.collection == .unsorted, let path = await collection(named: target),
+            path != .unsorted
+        {
+            move = path
+        }
+        return tags.isEmpty && move == nil ? nil : RulePlan(tags: tags, moveTo: move)
+    }
+
+    /// Counts what `applyAll` would change for `ids`; writes nothing.
+    func preview(ids: [ItemID]) async -> RulePreview {
+        var preview = RulePreview(items: 0, tagsAdded: 0, moved: 0)
+        for id in ids {
+            if Task.isCancelled { break }
+            guard let plan = await plan(for: id) else { continue }
+            preview.items += 1
+            preview.tagsAdded += plan.tags.count
+            if plan.moveTo != nil { preview.moved += 1 }
+        }
+        return preview
+    }
+
+    /// Applies the rules to `ids`; returns how many items changed. `progress` gets the number of items done.
+    func applyAll(ids: [ItemID], progress: @Sendable (Int) -> Void) async -> Int {
+        var changed = 0
+        for (done, id) in ids.enumerated() {
+            if Task.isCancelled { break }
+            if let plan = await plan(for: id) {
+                await write(plan, to: id)
+                changed += 1
+            }
+            progress(done + 1)
+        }
+        return changed
+    }
+
+    private func write(_ plan: RulePlan, to id: ItemID) async {
+        var current = id
         do {
-            if !tags.isEmpty {
+            if !plan.tags.isEmpty {
+                let tags = plan.tags
                 let saved = try await store.modify(current) { item in
                     for tag in tags where !DocumentAnalyzer.carries(item.tags, tag) { item.tags.append(tag) }
                 }
                 try? index.upsert(saved)
             }
-            if let target = outcome.moveTo, current.collection == .unsorted, let path = await collection(named: target),
-                path != .unsorted
-            {
+            if let path = plan.moveTo {
                 let moved = try await store.move(current, to: path)
                 try? index.remove(current)
                 try? index.upsert(moved)

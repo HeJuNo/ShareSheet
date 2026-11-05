@@ -5,6 +5,13 @@ import SharesheetCore
 
 private struct EvaluationError: Error {}
 
+private final class ProgressLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _values: [Int] = []
+    var values: [Int] { lock.withLock { _values } }
+    func add(_ value: Int) { lock.withLock { _values.append(value) } }
+}
+
 @MainActor
 @Suite(.timeLimit(.minutes(1)))
 struct RuleApplierTests {
@@ -66,6 +73,44 @@ struct RuleApplierTests {
         let all = try await env.store.listItems()
         #expect(all.count == 1 && all[0].id.collection == CollectionPath(components: ["Sozialversicherung"]))
         #expect(try ids(env) == [all[0].id.relativePath])
+    }
+
+    @Test func thePreviewCountsExactlyWhatApplyAllChanges() async throws {
+        let env = try ModelEnv()
+        let appleRule = rule(apple, [.addTag("apple")])
+        let svsRule = rule(svs, [.moveTo("Sozialversicherung")])
+        let applier = try applier(env, [appleRule, svsRule])
+        try await addLink(env, "https://apple.com/a")
+        try await addLink(env, "https://apple.com/b", tags: ["Apple"])  // carries it: no change
+        try await addLink(env, "https://example.com")
+        try await addDocument(env, text: "SVS Kontoauszug")
+        try await addDocument(env, text: "SVS Kontoauszug", in: CollectionPath(components: ["Ablage"]))  // sorted: stays
+        let ids = try env.index.search(LibraryQuery(scope: .all)).map(\.id)
+
+        let preview = await applier.preview(ids: ids)
+        #expect(preview == RulePreview(items: 2, tagsAdded: 1, moved: 1))
+        #expect(try await env.store.listItems().filter { $0.tags.contains("apple") }.isEmpty, "the preview writes nothing")
+
+        #expect(await applier.applyAll(ids: ids, progress: { _ in }) == 2)
+        let after = try env.index.search(LibraryQuery(scope: .all)).map(\.id)
+        #expect(await applier.preview(ids: after) == RulePreview(items: 0, tagsAdded: 0, moved: 0))
+        #expect(await applier.applyAll(ids: after, progress: { _ in }) == 0)
+    }
+
+    @Test func applyAllReportsProgressAndStopsWhenCancelled() async throws {
+        let env = try ModelEnv()
+        let applier = try applier(env, [rule(apple, [.addTag("apple")])])
+        let a = try await addLink(env, "https://apple.com/a")
+        let b = try await addLink(env, "https://apple.com/b")
+        let steps = ProgressLog()
+        #expect(await applier.applyAll(ids: [a.id, b.id], progress: { steps.add($0) }) == 2)
+        #expect(steps.values == [1, 2])
+
+        let c = try await addLink(env, "https://apple.com/c")
+        let task = Task { await applier.applyAll(ids: [c.id], progress: { _ in }) }
+        task.cancel()
+        #expect(await task.value == 0)
+        #expect(try await env.store.item(c.id).tags.isEmpty)
     }
 
     @Test func aMoveIsRecordedSoOpenScreensCanFollow() async throws {
