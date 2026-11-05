@@ -117,3 +117,27 @@ import Testing
         #expect(RuleCompiler.outcome(fromResult: Data(#"[{"moveTo":"  "}]"#.utf8)).moveTo == nil)
     }
 }
+
+@Suite struct RuleCompilerFieldTests {
+    @Test func fieldsAndTitleTravelAsValuesAndComeBackInRuleOrder() throws {
+        let cond = RuleCondition(field: .text, op: .contains, value: "Rechnung")
+        let set = RuleSet(rules: [
+            Rule(id: "a", name: "a", enabled: true, conditions: [cond], actions: [
+                .setField(name: "Betrag", pattern: "Gesamt {Zahl}"), .setField(name: "Datum", pattern: "am {Datum}"),
+                .setTitle("Tesla {Datum}"), .setField(name: "kaputt", pattern: "ohne"),
+            ])
+        ])
+        let compiled = try #require(RuleCompiler.compile(set))
+        #expect(compiled.values == ["rechnung", "Betrag", "Gesamt {Zahl}", "Datum", "am {Datum}", "Tesla {Datum}"])
+        let graph = try #require(JSONSerialization.jsonObject(with: compiled.decision) as? [String: Any])
+        let table = try #require((graph["nodes"] as? [[String: Any]])?.first { $0["type"] as? String == "decisionTableNode" })
+        let row = try #require(((table["content"] as? [String: Any])?["rules"] as? [[String: Any]])?.first)
+        #expect(row["out_setField"] as? String == "[rv[1], rv[2], rv[3], rv[4]]")
+        #expect(row["out_setTitle"] as? String == "rv[5]")
+
+        let result = Data(#"[{"setField":["A","p1","B","p2"],"setTitle":"T1"},{"setField":["A","p1"],"setTitle":"T2"},{"setField":["odd"]}]"#.utf8)
+        let outcome = RuleCompiler.outcome(fromResult: result)
+        #expect(outcome.fieldPatterns == [FieldPattern(name: "A", pattern: "p1"), FieldPattern(name: "B", pattern: "p2")])
+        #expect(outcome.titleTemplates == ["T1", "T2"])
+    }
+}

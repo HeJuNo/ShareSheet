@@ -1,15 +1,34 @@
 import Foundation
 
+public struct FieldPattern: Equatable, Sendable {
+    public var name: String
+    public var pattern: String
+
+    public init(name: String, pattern: String) {
+        self.name = name
+        self.pattern = pattern
+    }
+}
+
 public struct RuleOutcome: Equatable, Sendable {
     public var tags: [String]
     public var moveTo: String?
     /// Date patterns of the matching rules, in rule order, without repeats.
     public var datePatterns: [String]
+    /// Field patterns of the matching rules, in rule order, without repeats.
+    public var fieldPatterns: [FieldPattern]
+    /// Title templates of the matching rules, in rule order, without repeats.
+    public var titleTemplates: [String]
 
-    public init(tags: [String], moveTo: String?, datePatterns: [String] = []) {
+    public init(
+        tags: [String], moveTo: String?, datePatterns: [String] = [], fieldPatterns: [FieldPattern] = [],
+        titleTemplates: [String] = []
+    ) {
         self.tags = tags
         self.moveTo = moveTo
         self.datePatterns = datePatterns
+        self.fieldPatterns = fieldPatterns
+        self.titleTemplates = titleTemplates
     }
 }
 
@@ -71,6 +90,8 @@ public enum RuleCompiler {
             var tagReferences: [String] = []
             var moveReference: String?
             var dateReference: String?
+            var fieldReferences: [String] = []
+            var titleReference: String?
             for action in rule.actions {
                 switch action {
                 case .addTag(let tag):
@@ -90,12 +111,26 @@ public enum RuleCompiler {
                         dateReference = "rv[\(values.count)]"
                         values.append(pattern)
                     }
+                case .setField(let name, let pattern):
+                    if Rule.isUsable(fieldName: name), FieldExtractor.isValid(pattern: pattern) {
+                        fieldReferences.append("rv[\(values.count)]")
+                        fieldReferences.append("rv[\(values.count + 1)]")
+                        values.append(name.trimmingCharacters(in: .whitespaces))
+                        values.append(pattern)
+                    }
+                case .setTitle(let template):
+                    if titleReference == nil, !TitleTemplate.placeholders(in: template).isEmpty {
+                        titleReference = "rv[\(values.count)]"
+                        values.append(template)
+                    }
                 }
             }
             var outputs: [String: String] = [:]
             if !tagReferences.isEmpty { outputs["out_addTags"] = "[" + tagReferences.joined(separator: ", ") + "]" }
             if let moveReference { outputs["out_moveTo"] = moveReference }
             if let dateReference { outputs["out_setDate"] = dateReference }
+            if !fieldReferences.isEmpty { outputs["out_setField"] = "[" + fieldReferences.joined(separator: ", ") + "]" }
+            if let titleReference { outputs["out_setTitle"] = titleReference }
 
             // "all": one row with every condition; "any": one row per condition.
             let groups = rule.match == .all ? [conditionCells] : conditionCells.map { [$0] }
@@ -111,7 +146,7 @@ public enum RuleCompiler {
         let inputs = inputColumns.keys.sorted().map {
             ["id": $0, "name": $0, "field": inputColumns[$0]!, "type": "expression"]
         }
-        let outputs = ["addTags", "moveTo", "setDate"].map { ["id": "out_\($0)", "name": $0, "field": $0, "type": "expression"] }
+        let outputs = ["addTags", "moveTo", "setDate", "setField", "setTitle"].map { ["id": "out_\($0)", "name": $0, "field": $0, "type": "expression"] }
         let graph: [String: Any] = [
             "nodes": [
                 ["id": "input", "type": "inputNode", "name": "Request", "position": ["x": 0, "y": 0]],
@@ -136,7 +171,16 @@ public enum RuleCompiler {
         var tags: [String] = []
         var move: String?
         var patterns: [String] = []
+        var fields: [FieldPattern] = []
+        var titles: [String] = []
         for row in rows {
+            if let flat = row["setField"] as? [String] {
+                for index in stride(from: 0, to: flat.count - 1, by: 2) {
+                    let field = FieldPattern(name: flat[index], pattern: flat[index + 1])
+                    if !fields.contains(field) { fields.append(field) }
+                }
+            }
+            if let title = row["setTitle"] as? String, !title.isEmpty, !titles.contains(title) { titles.append(title) }
             for tag in (row["addTags"] as? [String]) ?? [] {
                 let tag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !tag.isEmpty, !tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) { tags.append(tag) }
@@ -148,6 +192,6 @@ public enum RuleCompiler {
                 move = target
             }
         }
-        return RuleOutcome(tags: tags, moveTo: move, datePatterns: patterns)
+        return RuleOutcome(tags: tags, moveTo: move, datePatterns: patterns, fieldPatterns: fields, titleTemplates: titles)
     }
 }

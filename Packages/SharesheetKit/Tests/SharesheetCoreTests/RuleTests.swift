@@ -99,3 +99,27 @@ import Testing
         #expect(try RuleSet.decode(data).rules == [good])
     }
 }
+
+@Suite struct RuleFieldActionTests {
+    private let cond = RuleCondition(field: .text, op: .contains, value: "Rechnung")
+    private func rule(_ actions: [RuleAction]) -> Rule { Rule(id: "r", name: "r", enabled: true, conditions: [cond], actions: actions) }
+
+    @Test func setFieldNeedsANameAndExactlyOnePlaceholder() throws {
+        let good = rule([.setField(name: "Gesamtbetrag", pattern: "Gesamtbetrag (EUR) {Zahl}")])
+        #expect(good.isUsable)
+        #expect(!rule([.setField(name: " ", pattern: "x {Zahl}")]).isUsable)
+        #expect(!rule([.setField(name: "A\nB", pattern: "x {Zahl}")]).isUsable)
+        #expect(!rule([.setField(name: "A", pattern: "x")]).isUsable)
+        #expect(!rule([.setField(name: "A", pattern: "{Zahl} {Text}")]).isUsable)
+        let data = try RuleSet(rules: [good]).encoded()
+        #expect(try RuleSet.decode(data).rules == [good])
+        #expect(String(decoding: data, as: UTF8.self).contains("\"setField\""))
+    }
+
+    @Test func setTitleNeedsAPlaceholder() throws {
+        let good = rule([.setTitle("Tesla {Rechnungsdatum}")])
+        #expect(good.isUsable)
+        #expect(!rule([.setTitle("Tesla")]).isUsable)
+        #expect(try RuleSet.decode(RuleSet(rules: [good]).encoded()).rules == [good])
+    }
+}

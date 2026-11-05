@@ -22,8 +22,13 @@ public enum RuleAction: Codable, Equatable, Sendable {
     case moveTo(String)
     /// A pattern with `{Datum}` and optionally `{Uhrzeit}`, see `DateExtractor`.
     case setDate(String)
+    /// Reads a typed field from the text by a pattern with one of `{Zahl}`, `{Datum}`, `{Text}`, see `FieldExtractor`.
+    case setField(name: String, pattern: String)
+    /// A title with field names in braces, see `TitleTemplate`.
+    case setTitle(String)
 
-    private enum Key: String, CodingKey { case addTag, moveTo, setDate }
+    private enum Key: String, CodingKey { case addTag, moveTo, setDate, setField, setTitle }
+    private struct FieldBody: Codable { var name: String; var pattern: String }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: Key.self)
@@ -33,6 +38,10 @@ public enum RuleAction: Codable, Equatable, Sendable {
             self = .moveTo(collection)
         } else if let pattern = try container.decodeIfPresent(String.self, forKey: .setDate) {
             self = .setDate(pattern)
+        } else if let body = try container.decodeIfPresent(FieldBody.self, forKey: .setField) {
+            self = .setField(name: body.name, pattern: body.pattern)
+        } else if let template = try container.decodeIfPresent(String.self, forKey: .setTitle) {
+            self = .setTitle(template)
         } else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown rule action"))
         }
@@ -44,6 +53,8 @@ public enum RuleAction: Codable, Equatable, Sendable {
         case .addTag(let tag): try container.encode(tag, forKey: .addTag)
         case .moveTo(let collection): try container.encode(collection, forKey: .moveTo)
         case .setDate(let pattern): try container.encode(pattern, forKey: .setDate)
+        case .setField(let name, let pattern): try container.encode(FieldBody(name: name, pattern: pattern), forKey: .setField)
+        case .setTitle(let template): try container.encode(template, forKey: .setTitle)
         }
     }
 }
@@ -93,6 +104,12 @@ public struct Rule: Codable, Equatable, Sendable, Identifiable {
         try c.encode(actions, forKey: .actions)
     }
 
+    /// A field name is not empty and stays on one line.
+    static func isUsable(fieldName name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        return !trimmed.isEmpty && !name.contains(where: \.isNewline)
+    }
+
     /// At least one condition, no condition without a value, and at least one action that does something.
     /// Anything else would never apply, or (without conditions) apply to every item.
     public var isUsable: Bool {
@@ -102,6 +119,8 @@ public struct Rule: Codable, Equatable, Sendable, Identifiable {
                 switch action {
                 case .addTag(let value), .moveTo(let value): !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 case .setDate(let pattern): DateExtractor.isValid(pattern: pattern)
+                case .setField(let name, let pattern): Rule.isUsable(fieldName: name) && FieldExtractor.isValid(pattern: pattern)
+                case .setTitle(let template): !TitleTemplate.placeholders(in: template).isEmpty
                 }
             }
     }
