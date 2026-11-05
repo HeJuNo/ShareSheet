@@ -58,4 +58,15 @@ struct ShareExtensionRuleTests {
         #expect(offered([["public.jpeg"]]) == ["SharesheetShare"])
         #expect(offered([["public.mpeg-4"]]) == ["SharesheetShare"])
     }
+
+    @Test func sharedPlainTextIsOfferedToTheMainExtension() {
+        // Text selected in Notes, Mail or Safari, a copied snippet, and the generic text types.
+        #expect(offered([["public.plain-text"]]) == ["SharesheetShare"])
+        #expect(offered([["public.utf8-plain-text", "public.plain-text"]]) == ["SharesheetShare"])
+        #expect(offered([["public.utf8-plain-text"]]) == ["SharesheetShare"])
+        #expect(offered([["public.utf16-plain-text"]]) == ["SharesheetShare"])
+        #expect(offered([["public.text"]]) == ["SharesheetShare"])
+        #expect(offered([["public.rtf", "public.utf8-plain-text"]]) == ["SharesheetShare"])
+        #expect(offered([["public.html"]]) == ["SharesheetShare"])
+    }
 }

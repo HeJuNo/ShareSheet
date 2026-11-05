@@ -45,8 +45,18 @@ struct SharedPayloadLoader {
         if inputs.isEmpty, let url = Self.firstWebURL(in: items) {
             inputs.append(.url(url, pageTitle: nil, selection: nil))
             failed = 0
+        } else if inputs.isEmpty, let text = Self.firstText(in: items) {
+            // The share's own text, when its attachment cannot be read.
+            inputs.append((try? textInput(text, name: nil)) ?? .text(text))
+            failed = 0
         }
         return (inputs, failed)
+    }
+
+    /// The first non-blank text the sending app put in the share itself.
+    private nonisolated static func firstText(in items: [NSExtensionItem]) -> String? {
+        items.compactMap { $0.attributedContentText?.string }
+            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
     /// Some apps share a post without a usable attachment and put its link only in the item's text.
@@ -107,14 +117,60 @@ struct SharedPayloadLoader {
             guard let url = try await loadObject(URL.self, from: provider) else { throw LoadError.empty }
             return .url(url, pageTitle: nil, selection: nil)
         case .text:
-            guard let text = try await loadObject(String.self, from: provider) else { throw LoadError.empty }
-            if let url = Self.webURL(text) { return .url(url, pageTitle: nil, selection: nil) }
-            if PayloadClassifier.isTooLargeForText(text) { return try saveText(text, name: provider.suggestedName) }
-            return .text(text)
+            guard let text = try await loadText(provider) else { throw LoadError.empty }
+            return try textInput(text, name: provider.suggestedName)
         case .file:
             guard let type = provider.registeredContentTypes.first else { throw LoadError.empty }
             return try await loadFile(provider, type: type)
         }
+    }
+
+    /// A link when the text is one, a file when it is too large for a snippet, else the snippet.
+    private func textInput(_ text: String, name: String?) throws -> SharedInput {
+        if let url = Self.webURL(text) { return .url(url, pageTitle: nil, selection: nil) }
+        if PayloadClassifier.isTooLargeForText(text) { return try saveText(text, name: name) }
+        return .text(text)
+    }
+
+    /// The usual route first. An attachment registered only as `public.plain-text` (or as raw data, a file, an
+    /// NSString item) cannot be read as a `String` object, so each text type is then read as data, then as an item.
+    private func loadText(_ provider: NSItemProvider) async throws -> String? {
+        if let text = try? await loadObject(String.self, from: provider) { return text }
+        for identifier in provider.registeredTypeIdentifiers where UTType(identifier)?.conforms(to: .text) == true {
+            // The item first: for a provider built from an object, the data is its archive, not its text.
+            if let text = await loadTextItem(provider, identifier) { return text }
+            if let text = await loadTextData(provider, identifier) { return text }
+        }
+        return nil
+    }
+
+    private func loadTextData(_ provider: NSItemProvider, _ identifier: String) async -> String? {
+        await withCheckedContinuation { continuation in
+            _ = provider.loadDataRepresentation(forTypeIdentifier: identifier) { data, _ in
+                continuation.resume(returning: data.flatMap(Self.decode))
+            }
+        }
+    }
+
+    private func loadTextItem(_ provider: NSItemProvider, _ identifier: String) async -> String? {
+        await withCheckedContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: identifier, options: nil) { item, _ in
+                let text: String?
+                switch item {
+                case let value as String: text = value
+                case let data as Data: text = Self.decode(data)
+                case let url as URL where url.isFileURL: text = (try? Data(contentsOf: url)).flatMap(Self.decode)
+                default: text = nil
+                }
+                continuation.resume(returning: text)
+            }
+        }
+    }
+
+    /// UTF-8, or UTF-16 when the data starts with a byte order mark; anything else is not text.
+    private nonisolated static func decode(_ data: Data) -> String? {
+        if data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF]) { return String(data: data, encoding: .utf16) }
+        return String(data: data, encoding: .utf8)
     }
 
     /// Text too large for an in-memory snippet becomes a `.txt` file.
