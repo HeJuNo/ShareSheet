@@ -138,7 +138,7 @@ private struct ActionRow: View {
     let tags: [String]
     let collections: [String]
 
-    private enum Kind: Hashable { case tag, move, date }
+    private enum Kind: Hashable { case tag, move, date, field, title }
 
     private var kind: Binding<Kind> {
         Binding(
@@ -147,6 +147,8 @@ private struct ActionRow: View {
                 case .addTag: .tag
                 case .moveTo: .move
                 case .setDate: .date
+                case .setField: .field
+                case .setTitle: .title
                 }
             },
             set: { new in
@@ -155,6 +157,8 @@ private struct ActionRow: View {
                 case .tag: action = .addTag(value)
                 case .move: action = .moveTo(value)
                 case .date: action = .setDate(value)
+                case .field: action = .setField(name: "", pattern: value)
+                case .title: action = .setTitle(value)
                 }
             })
     }
@@ -163,7 +167,8 @@ private struct ActionRow: View {
         Binding(
             get: {
                 switch action {
-                case .addTag(let value), .moveTo(let value), .setDate(let value): value
+                case .addTag(let value), .moveTo(let value), .setDate(let value), .setTitle(let value): value
+                case .setField(_, let pattern): pattern
                 }
             },
             set: { value in
@@ -171,8 +176,16 @@ private struct ActionRow: View {
                 case .addTag: action = .addTag(value)
                 case .moveTo: action = .moveTo(value)
                 case .setDate: action = .setDate(value)
+                case .setField(let name, _): action = .setField(name: name, pattern: value)
+                case .setTitle: action = .setTitle(value)
                 }
             })
+    }
+
+    private var fieldName: Binding<String> {
+        Binding(
+            get: { if case .setField(let name, _) = action { name } else { "" } },
+            set: { name in if case .setField(_, let pattern) = action { action = .setField(name: name, pattern: pattern) } })
     }
 
     var body: some View {
@@ -181,6 +194,11 @@ private struct ActionRow: View {
                 Text("Add tag").tag(Kind.tag)
                 Text("Move to collection").tag(Kind.move)
                 Text("Set date from text").tag(Kind.date)
+                Text("Set field from text").tag(Kind.field)
+                Text("Set title").tag(Kind.title)
+            }
+            if kind.wrappedValue == .field {
+                TextField("Field name", text: fieldName)
             }
             HStack {
                 TextField(placeholder, text: text)
@@ -208,6 +226,26 @@ private struct ActionRow: View {
                         .foregroundStyle(.orange)
                 }
             }
+            if case .setField(_, let pattern) = action {
+                Text("Use {Zahl}, {Datum} or {Text} once, e.g. Gesamtbetrag (EUR) {Zahl}.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                if !pattern.isEmpty, !FieldExtractor.isValid(pattern: pattern) {
+                    Text("The pattern needs exactly one of {Zahl}, {Datum} or {Text}.")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+            }
+            if case .setTitle(let template) = action {
+                Text("Use field names in braces, e.g. Tesla {Rechnungsdatum}. Fields are read before the title is set.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                if !template.isEmpty, TitleTemplate.placeholders(in: template).isEmpty {
+                    Text("The template needs at least one field name in braces.")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+            }
         }
     }
 
@@ -215,7 +253,8 @@ private struct ActionRow: View {
         switch kind.wrappedValue {
         case .tag: "Tag"
         case .move: "Collection"
-        case .date: "Pattern"
+        case .date, .field: "Pattern"
+        case .title: "Template"
         }
     }
 }

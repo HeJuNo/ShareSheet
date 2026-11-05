@@ -301,4 +301,60 @@ struct RuleApplierTests {
         await applier.apply(to: item.id)
         #expect(try await env.store.item(item.id).tags.isEmpty)
     }
+
+    // MARK: Fields and title from text
+
+    private let invoice = "Rechnungsdatum 2026/02/22\nGesamtbetrag (EUR) 4.77\nRechnung"
+    private var rechnung: [RuleCondition] { [RuleCondition(field: .text, op: .contains, value: "rechnung")] }
+    private var tesla: [RuleAction] {
+        [.setField(name: "Gesamtbetrag", pattern: "Gesamtbetrag (EUR) {Zahl}"),
+         .setField(name: "Rechnungsdatum", pattern: "Rechnungsdatum {Datum}"),
+         .setTitle("Tesla {Rechnungsdatum}")]
+    }
+
+    @Test func fieldsAndTitleComeFromTheTextAndASecondRunChangesNothing() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: invoice)
+        let applier = try applier(env, [rule(rechnung, tesla)])
+        #expect(await applier.preview(ids: [item.id]) == RulePreview(items: 1, tagsAdded: 0, moved: 0, fields: 2, titles: 1))
+        await applier.apply(to: item.id)
+        let saved = try await env.store.item(item.id)
+        #expect(saved.fields["Gesamtbetrag"] == .number(4.77))
+        #expect(saved.title.hasPrefix("Tesla 2026-02-2"))
+        #expect(!saved.titleManual)
+        #expect(await applier.plan(for: item.id) == nil)
+        #expect(await applier.preview(ids: [item.id]) == RulePreview(items: 0, tagsAdded: 0, moved: 0))
+    }
+
+    @Test func aHandSetTitleIsNeverChangedByARule() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: invoice)
+        _ = try await env.store.modify(item.id) { $0.title = "Mein Titel"; $0.titleManual = true }
+        let applier = try applier(env, [rule(rechnung, tesla)])
+        await applier.apply(to: item.id)
+        let saved = try await env.store.item(item.id)
+        #expect(saved.title == "Mein Titel")
+        #expect(saved.fields["Gesamtbetrag"] == .number(4.77), "fields are still read")
+    }
+
+    @Test func theFirstRuleWithAMatchSetsAFieldAndAnIncompleteTitleIsSkipped() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: invoice)
+        let applier = try applier(env, [
+            rule(rechnung, [.setField(name: "Betrag", pattern: "Summe {Zahl}")]),  // no match
+            rule(rechnung, [.setField(name: "Betrag", pattern: "Gesamtbetrag (EUR) {Zahl}"), .setTitle("X {Fehlt}")]),
+            rule(rechnung, [.setField(name: "Betrag", pattern: "Rechnungsdatum {Text}"), .setTitle("Rechnung {Betrag}")]),
+        ])
+        let plan = try #require(await applier.plan(for: item.id))
+        #expect(plan.fields["Betrag"] == .number(4.77))
+        #expect(plan.title == "Rechnung 4.77")
+    }
+
+    @Test func existingEqualValuesAreNotWrittenAgain() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: invoice)
+        _ = try await env.store.modify(item.id) { $0.fields = ["Gesamtbetrag": .number(4.77)] }
+        let applier = try applier(env, [rule(rechnung, [.setField(name: "Gesamtbetrag", pattern: "Gesamtbetrag (EUR) {Zahl}")])])
+        #expect(await applier.plan(for: item.id) == nil)
+    }
 }

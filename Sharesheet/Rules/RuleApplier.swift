@@ -8,6 +8,12 @@ struct RulePlan: Equatable, Sendable {
     var moveTo: CollectionPath?
     /// A new `created` read from the text; never set for an item whose date was set by hand.
     var date: Date? = nil
+    /// Fields whose value is new or different, by name.
+    var fields: [String: FieldValue] = [:]
+    /// A new title from a template; never set for an item whose title was edited by hand.
+    var title: String? = nil
+
+    var isEmpty: Bool { tags.isEmpty && moveTo == nil && date == nil && fields.isEmpty && title == nil }
 }
 
 struct RulePreview: Equatable, Sendable {
@@ -15,6 +21,8 @@ struct RulePreview: Equatable, Sendable {
     var tagsAdded: Int
     var moved: Int
     var dates = 0
+    var fields = 0
+    var titles = 0
 }
 
 protocol RuleApplying: Sendable {
@@ -82,7 +90,20 @@ actor RuleApplier: RuleApplying {
             date = outcome.datePatterns.lazy.compactMap { DateExtractor.date(in: text, pattern: $0) }.first
             if let found = date, abs(found.timeIntervalSince(item.created)) < 1 { date = nil }  // already that date
         }
-        return tags.isEmpty && move == nil && date == nil ? nil : RulePlan(tags: tags, moveTo: move, date: date)
+        // First pattern with a readable value wins per field name; equal values are not changes.
+        var read: [String: FieldValue] = [:]
+        for pattern in outcome.fieldPatterns where read[pattern.name] == nil {
+            if let value = FieldExtractor.value(in: text, pattern: pattern.pattern) { read[pattern.name] = value }
+        }
+        let fields = read.filter { !Self.same($0.value, item.fields[$0.key]) }
+        var title: String?
+        if !item.titleManual {
+            let known = item.fields.merging(read) { _, new in new }
+            title = outcome.titleTemplates.lazy.compactMap { TitleTemplate.fill($0, fields: known) }.first
+            if title == item.title { title = nil }
+        }
+        let plan = RulePlan(tags: tags, moveTo: move, date: date, fields: fields, title: title)
+        return plan.isEmpty ? nil : plan
     }
 
     /// Counts what `applyAll` would change for `ids`; writes nothing.
@@ -95,6 +116,8 @@ actor RuleApplier: RuleApplying {
             preview.tagsAdded += plan.tags.count
             if plan.moveTo != nil { preview.moved += 1 }
             if plan.date != nil { preview.dates += 1 }
+            preview.fields += plan.fields.count
+            if plan.title != nil { preview.titles += 1 }
         }
         return preview
     }
@@ -116,11 +139,13 @@ actor RuleApplier: RuleApplying {
     private func write(_ plan: RulePlan, to id: ItemID) async {
         var current = id
         do {
-            if !plan.tags.isEmpty || plan.date != nil {
-                let (tags, date) = (plan.tags, plan.date)
+            if !plan.tags.isEmpty || plan.date != nil || !plan.fields.isEmpty || plan.title != nil {
+                let (tags, date, fields, title) = (plan.tags, plan.date, plan.fields, plan.title)
                 let saved = try await store.modify(current) { item in
                     for tag in tags where !DocumentAnalyzer.carries(item.tags, tag) { item.tags.append(tag) }
                     if let date, !item.createdManual { item.created = date }
+                    item.fields.merge(fields) { _, new in new }
+                    if let title, !item.titleManual { item.title = title }
                 }
                 try? index.upsert(saved)
             }
@@ -135,6 +160,12 @@ actor RuleApplier: RuleApplying {
             // Most often the item was deleted while the rules ran.
             Self.log.error("Applying the rules failed: \(error)")
         }
+    }
+
+    /// Equal values, with dates compared to the second.
+    private static func same(_ a: FieldValue, _ b: FieldValue?) -> Bool {
+        if case .date(let x) = a, case .date(let y)? = b { return abs(x.timeIntervalSince(y)) < 1 }
+        return a == b
     }
 
     /// The collection `name` ("Parent/Child") names: an existing one regardless of case, else a new path.

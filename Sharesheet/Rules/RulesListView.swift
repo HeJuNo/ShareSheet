@@ -74,7 +74,7 @@ struct RulesListView: View {
             Button("Apply") { startApplying() }
             Button("Cancel", role: .cancel) {}
         } message: { preview in
-            Text("\(preview.items) items would change: \(preview.tagsAdded) tags added, \(preview.moved) moved.")
+            Text("\(preview.items) items would change: \(preview.tagsAdded) tags added, \(preview.moved) moved, \(preview.dates) dates, \(preview.fields) fields and \(preview.titles) titles set.")
         }
         .alert("Nothing to change", isPresented: $showsNothingToChange) {
             Button("OK", role: .cancel) {}
@@ -201,6 +201,8 @@ extension Rule {
         case .addTag(let tag): "Tag \(tag)"
         case .moveTo(let collection): "Move to \(collection)"
         case .setDate: "Set date from text"
+        case .setField(let name, _): "Set \(name)"
+        case .setTitle: "Set title"
         case nil: "Rule"
         }
     }
@@ -216,6 +218,8 @@ extension Rule {
             case .addTag(let tag): "tag \(tag)"
             case .moveTo(let collection): "move to \(collection)"
             case .setDate(let pattern): "set date from “\(pattern)”"
+            case .setField(let name, let pattern): "set \(name) from “\(pattern)”"
+            case .setTitle(let template): "set title “\(template)”"
             }
         }.joined(separator: ", ")
         return "\(conditions) → \(actions)"
