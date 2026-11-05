@@ -80,3 +80,41 @@ import Testing
     #expect(try ItemCodec.decode(text, id: item.id).createdManual)
     #expect(!(try ItemCodec.decode(ItemCodec.encode(Item(id: item.id, type: .text, title: "A", created: item.created)), id: item.id)).createdManual)
 }
+
+@Test func typedFieldsAndAHandSetTitleRoundTrip() throws {
+    let created = Date(timeIntervalSince1970: 1_800_000_000)
+    var item = Item(id: ItemID(relativePath: "Unsorted/A.md"), type: .text, title: "A", created: created)
+    item.fields = [
+        "Gesamtbetrag": .number(4.77), "Rechnungsdatum": .date(Date(timeIntervalSince1970: 1_771_718_400)),
+        "Einheit: kWh": .text("kWh \"x\""),
+    ]
+    item.titleManual = true
+    let text = ItemCodec.encode(item)
+    #expect(text.contains("title_manual: true"))
+    let decoded = try ItemCodec.decode(text, id: item.id)
+    #expect(decoded.fields == item.fields)
+    #expect(decoded.titleManual)
+    #expect(ItemCodec.encode(decoded) == text)
+}
+
+@Test func anItemWithoutFieldsWritesNoFieldLines() throws {
+    let item = Item(id: ItemID(relativePath: "Unsorted/A.md"), type: .text, title: "A", created: Date(timeIntervalSince1970: 1_800_000_000))
+    let text = ItemCodec.encode(item)
+    #expect(!text.contains("field") && !text.contains("title_manual"))
+    #expect(try ItemCodec.decode(text, id: item.id).fields.isEmpty)
+}
+
+@Test func fieldsKeepUnknownFrontmatterLines() throws {
+    var item = Item(id: ItemID(relativePath: "Unsorted/A.md"), type: .text, title: "A", created: Date(timeIntervalSince1970: 1_800_000_000))
+    item.fields = ["N": .number(3)]
+    item.extraFrontmatter = ["custom: yes"]
+    let text = ItemCodec.encode(item)
+    let decoded = try ItemCodec.decode(text, id: item.id)
+    #expect(decoded.extraFrontmatter == ["custom: yes"])
+    #expect(ItemCodec.encode(decoded) == text)
+}
+
+@Test func anInvalidFieldTypeIsRejected() {
+    let text = "---\ntype: text\ntitle: \"A\"\ntags: []\nfavorite: false\ncreated: 2027-01-15T08:00:00Z\nfield: [\"N\", \"bogus\", \"1\"]\n---\n"
+    #expect(throws: CodecError.invalidValue("field")) { try ItemCodec.decode(text, id: ItemID(relativePath: "Unsorted/A.md")) }
+}

@@ -8,7 +8,7 @@ public enum CodecError: Error, Equatable {
 
 public enum ItemCodec {
     private static let knownKeys: Set<String> = [
-        "type", "url", "file", "title", "description", "tags", "favorite", "created", "created_manual",
+        "type", "url", "file", "title", "description", "tags", "favorite", "created", "created_manual", "title_manual", "field",
         "image", "screenshot", "screenshot_dark", "archive", "capture",
     ]
     private static let highlightsHeading = "## Highlights"
@@ -27,6 +27,8 @@ public enum ItemCodec {
         lines.append("favorite: \(item.favorite)")
         lines.append("created: \(isoFormatter().string(from: item.created))")
         if item.createdManual { lines.append("created_manual: true") }
+        if item.titleManual { lines.append("title_manual: true") }
+        for name in item.fields.keys.sorted() { lines.append("field: \(encodeField(name, item.fields[name]!))") }
         if let image = item.image { lines.append("image: \(quote(image))") }
         if let screenshot = item.screenshot { lines.append("screenshot: \(quote(screenshot))") }
         if let dark = item.screenshotDark { lines.append("screenshot_dark: \(quote(dark))") }
@@ -71,6 +73,7 @@ public enum ItemCodec {
         var values: [String: String] = [:]
         var extra: [String] = []
         var blockTags: [String]?
+        var fieldLines: [String] = []
         var index = 1
         while index < end {
             let line = stripCR(all[index])
@@ -90,7 +93,7 @@ public enum ItemCodec {
                     }
                     if !items.isEmpty { blockTags = items }
                 }
-                values[key] = value
+                if key == "field" { fieldLines.append(value) } else { values[key] = value }
             } else {
                 extra.append(line)
             }
@@ -132,10 +135,22 @@ public enum ItemCodec {
         default: throw CodecError.invalidValue("created_manual")
         }
 
+        let titleManual: Bool
+        switch values["title_manual"] {
+        case nil, "false": titleManual = false
+        case "true": titleManual = true
+        default: throw CodecError.invalidValue("title_manual")
+        }
+        var fields: [String: FieldValue] = [:]
+        for line in fieldLines {
+            let (name, value) = try decodeField(line)
+            fields[name] = value
+        }
+
         var item = Item(
             id: id, type: type, url: url, file: try optional("file"), title: try required("title"),
             description: try optional("description"), tags: try blockTags ?? tags(values["tags"]),
-            favorite: favorite, created: created, createdManual: createdManual, image: try optional("image"),
+            favorite: favorite, created: created, createdManual: createdManual, fields: fields, titleManual: titleManual, image: try optional("image"),
             screenshot: try optional("screenshot"), screenshotDark: try optional("screenshot_dark"),
             archive: try optional("archive"),
             capture: capture, extraFrontmatter: extra)
@@ -186,6 +201,35 @@ public enum ItemCodec {
     }
 
     // MARK: Helpers
+
+    /// `["name", "type", "value"]` as a JSON array of strings; numbers use the shortest exact decimal form.
+    private static func encodeField(_ name: String, _ value: FieldValue) -> String {
+        let parts: [String]
+        switch value {
+        case .number(let number): parts = [name, "number", "\(number)"]
+        case .date(let date): parts = [name, "date", isoFormatter().string(from: date)]
+        case .text(let text): parts = [name, "text", text]
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        return String(decoding: (try? encoder.encode(parts)) ?? Data("[]".utf8), as: UTF8.self)
+    }
+
+    private static func decodeField(_ raw: String) throws -> (String, FieldValue) {
+        guard let parts = try? JSONDecoder().decode([String].self, from: Data(raw.utf8)), parts.count == 3 else {
+            throw CodecError.invalidValue("field")
+        }
+        switch parts[1] {
+        case "number":
+            guard let number = Double(parts[2]) else { throw CodecError.invalidValue("field") }
+            return (parts[0], .number(number))
+        case "date":
+            guard let date = isoFormatter().date(from: parts[2]) else { throw CodecError.invalidValue("field") }
+            return (parts[0], .date(date))
+        case "text": return (parts[0], .text(parts[2]))
+        default: throw CodecError.invalidValue("field")
+        }
+    }
 
     private static func isoFormatter() -> ISO8601DateFormatter {
         let formatter = ISO8601DateFormatter()
