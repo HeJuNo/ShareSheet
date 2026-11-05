@@ -55,6 +55,9 @@ struct SettingsView: View {
                     .disabled(model.failedCaptureCount == 0 || !model.isICloudAvailable)
                 }
                 Section {
+                    NavigationLink("Rules") { RulesListView(model: model.makeRulesModel()) }
+                }
+                Section {
                     Toggle("Analyze documents", isOn: $analyzeDocuments)
                     Picker("Tags", selection: $tagMode) {
                         Text("Off").tag(TagMode.off.rawValue)
