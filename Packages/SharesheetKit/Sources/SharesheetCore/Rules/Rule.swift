@@ -20,8 +20,10 @@ public struct RuleCondition: Codable, Equatable, Sendable {
 public enum RuleAction: Codable, Equatable, Sendable {
     case addTag(String)
     case moveTo(String)
+    /// A pattern with `{Datum}` and optionally `{Uhrzeit}`, see `DateExtractor`.
+    case setDate(String)
 
-    private enum Key: String, CodingKey { case addTag, moveTo }
+    private enum Key: String, CodingKey { case addTag, moveTo, setDate }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: Key.self)
@@ -29,6 +31,8 @@ public enum RuleAction: Codable, Equatable, Sendable {
             self = .addTag(tag)
         } else if let collection = try container.decodeIfPresent(String.self, forKey: .moveTo) {
             self = .moveTo(collection)
+        } else if let pattern = try container.decodeIfPresent(String.self, forKey: .setDate) {
+            self = .setDate(pattern)
         } else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown rule action"))
         }
@@ -39,6 +43,7 @@ public enum RuleAction: Codable, Equatable, Sendable {
         switch self {
         case .addTag(let tag): try container.encode(tag, forKey: .addTag)
         case .moveTo(let collection): try container.encode(collection, forKey: .moveTo)
+        case .setDate(let pattern): try container.encode(pattern, forKey: .setDate)
         }
     }
 }
@@ -96,6 +101,7 @@ public struct Rule: Codable, Equatable, Sendable, Identifiable {
             && actions.contains { action in
                 switch action {
                 case .addTag(let value), .moveTo(let value): !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                case .setDate(let pattern): DateExtractor.isValid(pattern: pattern)
                 }
             }
     }

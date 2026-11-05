@@ -138,38 +138,55 @@ private struct ActionRow: View {
     let tags: [String]
     let collections: [String]
 
-    private var isMove: Binding<Bool> {
+    private enum Kind: Hashable { case tag, move, date }
+
+    private var kind: Binding<Kind> {
         Binding(
-            get: { if case .moveTo = action { true } else { false } },
-            set: { move in action = move ? .moveTo(text.wrappedValue) : .addTag(text.wrappedValue) })
+            get: {
+                switch action {
+                case .addTag: .tag
+                case .moveTo: .move
+                case .setDate: .date
+                }
+            },
+            set: { new in
+                let value = text.wrappedValue
+                switch new {
+                case .tag: action = .addTag(value)
+                case .move: action = .moveTo(value)
+                case .date: action = .setDate(value)
+                }
+            })
     }
 
     private var text: Binding<String> {
         Binding(
             get: {
                 switch action {
-                case .addTag(let value), .moveTo(let value): value
+                case .addTag(let value), .moveTo(let value), .setDate(let value): value
                 }
             },
             set: { value in
                 switch action {
                 case .addTag: action = .addTag(value)
                 case .moveTo: action = .moveTo(value)
+                case .setDate: action = .setDate(value)
                 }
             })
     }
 
     var body: some View {
         VStack(alignment: .leading) {
-            Picker("Action", selection: isMove) {
-                Text("Add tag").tag(false)
-                Text("Move to collection").tag(true)
+            Picker("Action", selection: kind) {
+                Text("Add tag").tag(Kind.tag)
+                Text("Move to collection").tag(Kind.move)
+                Text("Set date from text").tag(Kind.date)
             }
             HStack {
-                TextField(isMove.wrappedValue ? "Collection" : "Tag", text: text)
+                TextField(placeholder, text: text)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                let suggestions = isMove.wrappedValue ? collections : tags
+                let suggestions = kind.wrappedValue == .move ? collections : kind.wrappedValue == .tag ? tags : []
                 if !suggestions.isEmpty {
                     Menu {
                         ForEach(suggestions.prefix(40), id: \.self) { name in
@@ -181,6 +198,24 @@ private struct ActionRow: View {
                     .accessibilityLabel(Text("Choose existing"))
                 }
             }
+            if case .setDate(let pattern) = action {
+                Text("Use {Datum} for the date and {Uhrzeit} for the time, e.g. Ihr Einkauf am {Datum} um {Uhrzeit} Uhr.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                if !pattern.isEmpty, !DateExtractor.isValid(pattern: pattern) {
+                    Text("The pattern needs {Datum} exactly once and {Uhrzeit} at most once.")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    private var placeholder: LocalizedStringKey {
+        switch kind.wrappedValue {
+        case .tag: "Tag"
+        case .move: "Collection"
+        case .date: "Pattern"
         }
     }
 }

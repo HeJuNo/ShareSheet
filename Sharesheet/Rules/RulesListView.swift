@@ -200,6 +200,7 @@ extension Rule {
         switch actions.first {
         case .addTag(let tag): "Tag \(tag)"
         case .moveTo(let collection): "Move to \(collection)"
+        case .setDate: "Set date from text"
         case nil: "Rule"
         }
     }
@@ -214,6 +215,7 @@ extension Rule {
             switch action {
             case .addTag(let tag): "tag \(tag)"
             case .moveTo(let collection): "move to \(collection)"
+            case .setDate(let pattern): "set date from “\(pattern)”"
             }
         }.joined(separator: ", ")
         return "\(conditions) → \(actions)"

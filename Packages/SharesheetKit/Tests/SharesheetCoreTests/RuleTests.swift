@@ -86,4 +86,16 @@ import Testing
         #expect(second.lastPathComponent == "rules.json.broken 2")
         #expect(FileManager.default.fileExists(atPath: root.appending(path: RuleFile.name).path))
     }
+
+    @Test func setDateIsAnActionOnlyWithAUsablePattern() throws {
+        let cond = RuleCondition(field: .text, op: .contains, value: "Einkauf")
+        func rule(_ actions: [RuleAction]) -> Rule { Rule(id: "r", name: "r", enabled: true, conditions: [cond], actions: actions) }
+        let good = rule([.setDate("Ihr Einkauf am {Datum} um {Uhrzeit} Uhr")])
+        #expect(good.isUsable)
+        #expect(!rule([.setDate("Ihr Einkauf")]).isUsable)
+        #expect(rule([.setDate("kaputt"), .addTag("t")]).isUsable)
+        let data = try RuleSet(rules: [good]).encoded()
+        #expect(String(decoding: data, as: UTF8.self).contains("\"setDate\" : \"Ihr Einkauf am {Datum} um {Uhrzeit} Uhr\""))
+        #expect(try RuleSet.decode(data).rules == [good])
+    }
 }

@@ -70,3 +70,13 @@ import Testing
     let item = Item.fixture(type: .text, url: nil, content: "x\n\n## Note\n\ny", note: "z")
     #expect(try ItemCodec.decode(ItemCodec.encode(item), id: item.id) == item)
 }
+
+@Test func aHandSetDateIsMarkedInTheFileAndRoundTrips() throws {
+    var item = Item(id: ItemID(relativePath: "Unsorted/A.md"), type: .text, title: "A", created: Date(timeIntervalSince1970: 1_800_000_000))
+    #expect(!ItemCodec.encode(item).contains("created_manual"))
+    item.createdManual = true
+    let text = ItemCodec.encode(item)
+    #expect(text.contains("created_manual: true"))
+    #expect(try ItemCodec.decode(text, id: item.id).createdManual)
+    #expect(!(try ItemCodec.decode(ItemCodec.encode(Item(id: item.id, type: .text, title: "A", created: item.created)), id: item.id)).createdManual)
+}

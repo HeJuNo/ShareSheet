@@ -45,6 +45,8 @@ public struct Item: Equatable, Sendable {
     public var tags: [String]
     public var favorite: Bool
     public var created: Date
+    /// True when `created` was set by hand; rules never change such a date.
+    public var createdManual: Bool
     public var image: String?
     public var screenshot: String?
     /// The page in its own dark appearance, captured only for pages that have one.
@@ -63,7 +65,7 @@ public struct Item: Equatable, Sendable {
     public init(
         id: ItemID, type: ItemType, url: URL? = nil, file: String? = nil, title: String,
         description: String? = nil, tags: [String] = [], favorite: Bool = false, created: Date,
-        image: String? = nil, screenshot: String? = nil, screenshotDark: String? = nil, archive: String? = nil,
+        createdManual: Bool = false, image: String? = nil, screenshot: String? = nil, screenshotDark: String? = nil, archive: String? = nil,
         capture: CaptureState? = nil, note: String = "", content: String? = nil,
         highlights: [String] = [], extraFrontmatter: [String] = [], extraBody: String = ""
     ) {
@@ -76,6 +78,7 @@ public struct Item: Equatable, Sendable {
         self.tags = tags
         self.favorite = favorite
         self.created = created
+        self.createdManual = createdManual
         self.image = image
         self.screenshot = screenshot
         self.screenshotDark = screenshotDark

@@ -3,10 +3,13 @@ import Foundation
 public struct RuleOutcome: Equatable, Sendable {
     public var tags: [String]
     public var moveTo: String?
+    /// Date patterns of the matching rules, in rule order, without repeats.
+    public var datePatterns: [String]
 
-    public init(tags: [String], moveTo: String?) {
+    public init(tags: [String], moveTo: String?, datePatterns: [String] = []) {
         self.tags = tags
         self.moveTo = moveTo
+        self.datePatterns = datePatterns
     }
 }
 
@@ -67,6 +70,7 @@ public enum RuleCompiler {
             }
             var tagReferences: [String] = []
             var moveReference: String?
+            var dateReference: String?
             for action in rule.actions {
                 switch action {
                 case .addTag(let tag):
@@ -81,11 +85,17 @@ public enum RuleCompiler {
                         moveReference = "rv[\(values.count)]"
                         values.append(collection)
                     }
+                case .setDate(let pattern):
+                    if dateReference == nil, DateExtractor.isValid(pattern: pattern) {
+                        dateReference = "rv[\(values.count)]"
+                        values.append(pattern)
+                    }
                 }
             }
             var outputs: [String: String] = [:]
             if !tagReferences.isEmpty { outputs["out_addTags"] = "[" + tagReferences.joined(separator: ", ") + "]" }
             if let moveReference { outputs["out_moveTo"] = moveReference }
+            if let dateReference { outputs["out_setDate"] = dateReference }
 
             // "all": one row with every condition; "any": one row per condition.
             let groups = rule.match == .all ? [conditionCells] : conditionCells.map { [$0] }
@@ -101,7 +111,7 @@ public enum RuleCompiler {
         let inputs = inputColumns.keys.sorted().map {
             ["id": $0, "name": $0, "field": inputColumns[$0]!, "type": "expression"]
         }
-        let outputs = ["addTags", "moveTo"].map { ["id": "out_\($0)", "name": $0, "field": $0, "type": "expression"] }
+        let outputs = ["addTags", "moveTo", "setDate"].map { ["id": "out_\($0)", "name": $0, "field": $0, "type": "expression"] }
         let graph: [String: Any] = [
             "nodes": [
                 ["id": "input", "type": "inputNode", "name": "Request", "position": ["x": 0, "y": 0]],
@@ -125,17 +135,19 @@ public enum RuleCompiler {
         }
         var tags: [String] = []
         var move: String?
+        var patterns: [String] = []
         for row in rows {
             for tag in (row["addTags"] as? [String]) ?? [] {
                 let tag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !tag.isEmpty, !tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) { tags.append(tag) }
             }
+            if let pattern = row["setDate"] as? String, !pattern.isEmpty, !patterns.contains(pattern) { patterns.append(pattern) }
             if move == nil, let target = (row["moveTo"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
                 !target.isEmpty
             {
                 move = target
             }
         }
-        return RuleOutcome(tags: tags, moveTo: move)
+        return RuleOutcome(tags: tags, moveTo: move, datePatterns: patterns)
     }
 }

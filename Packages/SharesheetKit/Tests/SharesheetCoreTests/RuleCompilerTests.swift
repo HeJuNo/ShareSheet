@@ -86,6 +86,26 @@ import Testing
         #expect(RuleCompiler.compile(set) == nil)
     }
 
+    @Test func setDateTravelsAsAValueAndComesBackAsAPattern() throws {
+        let pattern = "Ihr Einkauf am {Datum} um {Uhrzeit} Uhr"
+        let set = RuleSet(rules: [
+            rule("d", [contains(.text, "Einkauf")], [.addTag("Einkauf"), .setDate(pattern), .setDate("zweites {Datum}")]),
+            rule("bad", [contains(.text, "x")], [.setDate("ohne Platzhalter")]),
+        ])
+        let compiled = try #require(RuleCompiler.compile(set))
+        #expect(compiled.values == ["einkauf", "Einkauf", pattern])
+        let graph = try object(compiled.decision)
+        let table = try #require((graph["nodes"] as? [[String: Any]])?.first { $0["type"] as? String == "decisionTableNode" })
+        let content = try #require(table["content"] as? [String: Any])
+        let row = try #require((content["rules"] as? [[String: Any]])?.first)
+        #expect(row["out_setDate"] as? String == "rv[2]")
+        #expect((content["rules"] as? [[String: Any]])?.count == 1, "a rule whose only action is an invalid pattern is dropped")
+
+        let result = Data(#"[{"setDate":"P1"},{"setDate":"P2","addTags":["x"]},{"setDate":"P1"},{"setDate":null}]"#.utf8)
+        #expect(RuleCompiler.outcome(fromResult: result).datePatterns == ["P1", "P2"])
+        #expect(RuleCompiler.outcome(fromResult: Data("[]".utf8)).datePatterns.isEmpty)
+    }
+
     @Test func outcomeDeduplicatesTagsAndTakesFirstMove() {
         let result = Data(#"[{"addTags":["Apple","tech"],"moveTo":"A"},{"addTags":["apple"],"moveTo":"B"},{"moveTo":null,"addTags":null}]"#.utf8)
         #expect(RuleCompiler.outcome(fromResult: result) == RuleOutcome(tags: ["Apple", "tech"], moveTo: "A"))
