@@ -156,7 +156,7 @@ struct ItemResults: View {
             }
         }
         .listStyle(.plain)
-        .safeAreaInset(edge: .bottom) { FieldSumsBar(stats: model.fieldStats(query)) }
+        .safeAreaInset(edge: .bottom) { FieldStatsBar(stats: model.fieldStats(query)) }
         .overlay {
             if items.isEmpty {
                 if let text = query.text {
@@ -184,23 +184,68 @@ struct ItemResults: View {
     }
 }
 
-/// One line per number field of the listed items: its sum and how many items have it.
-struct FieldSumsBar: View {
+/// One row per number field of the listed items: its name and result, and below it which aggregate that is and
+/// over how many items. Two rows at most; "N more" opens the rest.
+struct FieldStatsBar: View {
     let stats: [FieldStat]
+    @State private var showsAll = false
+    private let visibleRows = 2
 
     var body: some View {
         if !stats.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(stats) { stat in
-                    let value = stat.value?.formatted(.number.precision(.fractionLength(0...2))) ?? "–"
-                    Text(verbatim: "\(stat.name): \(value) (\(stat.count))")
-                        .font(.footnote.monospacedDigit())
+            VStack(spacing: 8) {
+                ForEach(stats.prefix(visibleRows)) { FieldStatRow(stat: $0) }
+                if stats.count > visibleRows {
+                    Button {
+                        showsAll = true
+                    } label: {
+                        Text("\(stats.count - visibleRows) more")
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
             .background(.bar)
+            .sheet(isPresented: $showsAll) {
+                NavigationStack {
+                    List(stats) { FieldStatRow(stat: $0) }
+                        .navigationTitle("Fields")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) { Button("Done") { showsAll = false } }
+                        }
+                }
+                .presentationDetents([.medium, .large])
+            }
         }
+    }
+}
+
+struct FieldStatRow: View {
+    let stat: FieldStat
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: stat.name)
+                    .font(.subheadline)
+                (Text(stat.aggregate.title) + Text(verbatim: " · ") + Text("\(stat.count) items"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(verbatim: stat.value?.formatted(.number.precision(.fractionLength(0...2))) ?? "–")
+                .font(.headline.monospacedDigit())
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: stat.name))
+        .accessibilityValue(valueDescription)
+    }
+
+    private var valueDescription: Text {
+        let value = stat.value?.formatted(.number.precision(.fractionLength(0...2))) ?? String(localized: "no value")
+        return Text(stat.aggregate.title) + Text(verbatim: " \(value), ") + Text("\(stat.count) items")
     }
 }

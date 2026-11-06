@@ -73,6 +73,8 @@ struct ItemDetailView: View {
     @State private var isGone = false
     @State private var isCapturing = false
     @State private var confirmsDelete = false
+    /// The name of the field open in the edit sheet.
+    @State private var editingField: String?
     @State private var failure: Failure?
     /// The attachment open in Quick Look. Kept here rather than in the list row: presenting full screen
     /// takes the list out of the window, the row is rebuilt and would lose the state, closing the preview.
@@ -116,6 +118,11 @@ struct ItemDetailView: View {
             Task { await move(to: destination) }
         }
         .quickLookPreview($previewURL)
+        .sheet(isPresented: $editingField.isPresent()) {
+            if let name = editingField, let value = item?.fields[name] {
+                FieldEditSheet(name: name, value: value) { new in Task { await setField(name, new) } }
+            }
+        }
         .onDisappear { flush(committingPendingTag: true) }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { flush(committingPendingTag: false) }
@@ -142,10 +149,23 @@ struct ItemDetailView: View {
             if !item.fields.isEmpty {
                 Section("Fields") {
                     ForEach(item.fields.keys.sorted(), id: \.self) { name in
-                        LabeledContent {
-                            Text(verbatim: Self.display(item.fields[name]!))
+                        Button {
+                            editingField = name
                         } label: {
-                            Text(verbatim: name)
+                            LabeledContent {
+                                Text(verbatim: Self.display(item.fields[name]!))
+                            } label: {
+                                Text(verbatim: name)
+                            }
+                        }
+                        .tint(.primary)
+                        .swipeActions(edge: .trailing) {
+                            // Deleted without asking: rules will not set the field again, and it can be edited back in.
+                            Button(role: .destructive) {
+                                Task { await deleteField(name) }
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
                         }
                     }
                 }
@@ -352,6 +372,21 @@ struct ItemDetailView: View {
         case .date(let date): date.formatted(date: .abbreviated, time: .omitted)
         case .text(let text): text
         }
+    }
+
+    private func setField(_ name: String, _ value: FieldValue) async {
+        do { adopt(try await model.setField(id, name: name, value: value)) } catch { failure = .save }
+    }
+
+    private func deleteField(_ name: String) async {
+        do { adopt(try await model.deleteField(id, name: name)) } catch { failure = .save }
+    }
+
+    /// Takes over what the store wrote for the fields; the other edits on screen stay as they are.
+    private func adopt(_ saved: Item) {
+        item?.fields = saved.fields
+        item?.fieldsManual = saved.fieldsManual
+        item?.fieldsDeleted = saved.fieldsDeleted
     }
 
     private func binding<Value>(_ keyPath: WritableKeyPath<Item, Value>) -> Binding<Value> {
