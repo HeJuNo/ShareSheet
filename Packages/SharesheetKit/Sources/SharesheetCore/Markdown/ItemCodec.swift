@@ -8,7 +8,7 @@ public enum CodecError: Error, Equatable {
 
 public enum ItemCodec {
     private static let knownKeys: Set<String> = [
-        "type", "url", "file", "title", "description", "tags", "favorite", "created", "created_manual", "title_manual", "field",
+        "type", "url", "file", "title", "description", "tags", "favorite", "created", "created_manual", "title_manual", "field", "field_manual", "field_deleted",
         "image", "screenshot", "screenshot_dark", "archive", "capture",
     ]
     private static let highlightsHeading = "## Highlights"
@@ -29,6 +29,8 @@ public enum ItemCodec {
         if item.createdManual { lines.append("created_manual: true") }
         if item.titleManual { lines.append("title_manual: true") }
         for name in item.fields.keys.sorted() { lines.append("field: \(encodeField(name, item.fields[name]!))") }
+        for name in item.fieldsManual.sorted() { lines.append("field_manual: \(encodeName(name))") }
+        for name in item.fieldsDeleted.sorted() { lines.append("field_deleted: \(encodeName(name))") }
         if let image = item.image { lines.append("image: \(quote(image))") }
         if let screenshot = item.screenshot { lines.append("screenshot: \(quote(screenshot))") }
         if let dark = item.screenshotDark { lines.append("screenshot_dark: \(quote(dark))") }
@@ -74,6 +76,8 @@ public enum ItemCodec {
         var extra: [String] = []
         var blockTags: [String]?
         var fieldLines: [String] = []
+        var manualLines: [String] = []
+        var deletedLines: [String] = []
         var index = 1
         while index < end {
             let line = stripCR(all[index])
@@ -93,7 +97,12 @@ public enum ItemCodec {
                     }
                     if !items.isEmpty { blockTags = items }
                 }
-                if key == "field" { fieldLines.append(value) } else { values[key] = value }
+                switch key {
+                case "field": fieldLines.append(value)
+                case "field_manual": manualLines.append(value)
+                case "field_deleted": deletedLines.append(value)
+                default: values[key] = value
+                }
             } else {
                 extra.append(line)
             }
@@ -147,10 +156,13 @@ public enum ItemCodec {
             fields[name] = value
         }
 
+        let fieldsManual = try Set(manualLines.flatMap(decodeNames)), fieldsDeleted = try Set(deletedLines.flatMap(decodeNames))
+
         var item = Item(
             id: id, type: type, url: url, file: try optional("file"), title: try required("title"),
             description: try optional("description"), tags: try blockTags ?? tags(values["tags"]),
-            favorite: favorite, created: created, createdManual: createdManual, fields: fields, titleManual: titleManual, image: try optional("image"),
+            favorite: favorite, created: created, createdManual: createdManual, fields: fields, titleManual: titleManual,
+            fieldsManual: fieldsManual, fieldsDeleted: fieldsDeleted, image: try optional("image"),
             screenshot: try optional("screenshot"), screenshotDark: try optional("screenshot_dark"),
             archive: try optional("archive"),
             capture: capture, extraFrontmatter: extra)
@@ -213,6 +225,20 @@ public enum ItemCodec {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.withoutEscapingSlashes]
         return String(decoding: (try? encoder.encode(parts)) ?? Data("[]".utf8), as: UTF8.self)
+    }
+
+    /// A field name as a JSON array with one string, like the `field` lines.
+    private static func encodeName(_ name: String) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        return String(decoding: (try? encoder.encode([name])) ?? Data("[]".utf8), as: UTF8.self)
+    }
+
+    private static func decodeNames(_ raw: String) throws -> [String] {
+        guard let names = try? JSONDecoder().decode([String].self, from: Data(raw.utf8)) else {
+            throw CodecError.invalidValue("field_manual")
+        }
+        return names
     }
 
     private static func decodeField(_ raw: String) throws -> (String, FieldValue) {

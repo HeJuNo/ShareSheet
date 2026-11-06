@@ -58,6 +58,9 @@ public struct Item: Equatable, Sendable {
     public var fields: [String: FieldValue]
     /// True when the title was edited by hand; rules never change such a title.
     public var titleManual: Bool
+    /// Names of fields changed by hand, and of fields deleted by hand; rules leave both alone.
+    public var fieldsManual: Set<String>
+    public var fieldsDeleted: Set<String>
     public var image: String?
     public var screenshot: String?
     /// The page in its own dark appearance, captured only for pages that have one.
@@ -76,7 +79,8 @@ public struct Item: Equatable, Sendable {
     public init(
         id: ItemID, type: ItemType, url: URL? = nil, file: String? = nil, title: String,
         description: String? = nil, tags: [String] = [], favorite: Bool = false, created: Date,
-        createdManual: Bool = false, fields: [String: FieldValue] = [:], titleManual: Bool = false, image: String? = nil, screenshot: String? = nil, screenshotDark: String? = nil, archive: String? = nil,
+        createdManual: Bool = false, fields: [String: FieldValue] = [:], titleManual: Bool = false,
+        fieldsManual: Set<String> = [], fieldsDeleted: Set<String> = [], image: String? = nil, screenshot: String? = nil, screenshotDark: String? = nil, archive: String? = nil,
         capture: CaptureState? = nil, note: String = "", content: String? = nil,
         highlights: [String] = [], extraFrontmatter: [String] = [], extraBody: String = ""
     ) {
@@ -92,6 +96,8 @@ public struct Item: Equatable, Sendable {
         self.createdManual = createdManual
         self.fields = fields
         self.titleManual = titleManual
+        self.fieldsManual = fieldsManual
+        self.fieldsDeleted = fieldsDeleted
         self.image = image
         self.screenshot = screenshot
         self.screenshotDark = screenshotDark

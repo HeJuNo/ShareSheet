@@ -118,3 +118,35 @@ import Testing
     let text = "---\ntype: text\ntitle: \"A\"\ntags: []\nfavorite: false\ncreated: 2027-01-15T08:00:00Z\nfield: [\"N\", \"bogus\", \"1\"]\n---\n"
     #expect(throws: CodecError.invalidValue("field")) { try ItemCodec.decode(text, id: ItemID(relativePath: "Unsorted/A.md")) }
 }
+
+@Suite struct ItemCodecFieldMarkerTests {
+    private func item(manual: Set<String> = [], deleted: Set<String> = []) -> Item {
+        Item(id: ItemID(relativePath: "Unsorted/A.md"), type: .text, title: "T", created: Date(timeIntervalSince1970: 1_700_000_000),
+             fields: ["Betrag": .number(4.77)], fieldsManual: manual, fieldsDeleted: deleted)
+    }
+
+    @Test func handEditedAndDeletedNamesRoundTrip() throws {
+        let original = item(manual: ["Betrag", #"Na"me: x"#], deleted: ["Menge"])
+        let text = ItemCodec.encode(original)
+        let decoded = try ItemCodec.decode(text, id: original.id)
+        #expect(decoded.fieldsManual == original.fieldsManual)
+        #expect(decoded.fieldsDeleted == ["Menge"])
+    }
+
+    @Test func emptyMarkersWriteNothingAndOldFilesLoad() throws {
+        let text = ItemCodec.encode(item())
+        #expect(!text.contains("field_manual") && !text.contains("field_deleted"))
+        let decoded = try ItemCodec.decode(text, id: ItemID(relativePath: "Unsorted/A.md"))
+        #expect(decoded.fieldsManual.isEmpty && decoded.fieldsDeleted.isEmpty)
+    }
+
+    @Test func unknownLinesSurviveNextToTheMarkers() throws {
+        let original = item(manual: ["Betrag"])
+        var text = ItemCodec.encode(original)
+        text = text.replacingOccurrences(of: "favorite: false", with: "favorite: false\nx_custom: 1")
+        let decoded = try ItemCodec.decode(text, id: original.id)
+        #expect(decoded.extraFrontmatter == ["x_custom: 1"])
+        #expect(ItemCodec.encode(decoded).contains("x_custom: 1"))
+        #expect(try ItemCodec.decode(ItemCodec.encode(decoded), id: original.id) == decoded)
+    }
+}
