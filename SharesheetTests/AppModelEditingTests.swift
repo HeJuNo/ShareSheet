@@ -286,7 +286,44 @@ struct AppModelTitleAndSumsTests {
             item = try await env.store.modify(item.id) { $0.fields = ["Betrag": .number(amount)] }
             try env.index.upsert(item)
         }
-        #expect(model.fieldSums(LibraryQuery(scope: .all)) == [FieldSum(name: "Betrag", total: 10, count: 2)])
+        #expect(model.fieldStats(LibraryQuery(scope: .all)) == [FieldStat(name: "Betrag", aggregate: .sum, value: 10, count: 2)])
+    }
+
+    @Test func theRulesChooseWhichAggregateAListShows() async throws {
+        let env = try ModelEnv()
+        try RuleFile.save(RuleSet(rules: [Rule(
+            id: "r", name: "r", enabled: true, conditions: [RuleCondition(field: .text, op: .contains, value: "x")],
+            actions: [.setField(name: "Betrag", pattern: "Summe {Zahl}", aggregate: .max)])]), to: env.libraryRoot)
+        let model = env.model(rulesRoot: env.libraryRoot)
+        await model.refresh()
+        for amount in [4.5, 5.5] {
+            var item = try await env.store.create(ItemDraft(type: .text, title: "R", content: "x"), in: .unsorted)
+            item = try await env.store.modify(item.id) { $0.fields = ["Betrag": .number(amount), "Rest": .text("x")] }
+            try env.index.upsert(item)
+        }
+        #expect(model.fieldStats(LibraryQuery(scope: .all)) == [FieldStat(name: "Betrag", aggregate: .max, value: 5.5, count: 2)])
+    }
+
+    @Test func editingAFieldMarksItAsHandSetAndDeletingKeepsRulesFromSettingItAgain() async throws {
+        let env = try ModelEnv()
+        let model = env.model()
+        await model.refresh()
+        var item = try await env.store.create(ItemDraft(type: .text, title: "R", content: "x"), in: .unsorted)
+        item = try await env.store.modify(item.id) { $0.fields = ["Betrag": .number(1), "Menge": .number(2)] }
+        try env.index.upsert(item)
+
+        let edited = try await model.setField(item.id, name: "Betrag", value: .number(7))
+        #expect(edited.fields["Betrag"] == .number(7) && edited.fieldsManual == ["Betrag"])
+        #expect(model.fieldStats(LibraryQuery(scope: .all)).first { $0.name == "Betrag" }?.value == 7)
+
+        let deleted = try await model.deleteField(item.id, name: "Menge")
+        #expect(deleted.fields["Menge"] == nil && deleted.fieldsDeleted == ["Menge"])
+        #expect(model.fieldStats(LibraryQuery(scope: .all)).map(\.name) == ["Betrag"])
+        let reloaded = try await env.store.item(item.id)
+        #expect(reloaded.fieldsManual == ["Betrag"] && reloaded.fieldsDeleted == ["Menge"])
+
+        let again = try await model.setField(item.id, name: "Menge", value: .number(3))
+        #expect(again.fieldsDeleted.isEmpty && again.fieldsManual == ["Betrag", "Menge"])
     }
 
     @Test func anUntouchedTitleIsNotMarkedAsHandSet() async throws {

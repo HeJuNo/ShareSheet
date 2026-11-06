@@ -23,8 +23,13 @@ final class RulesModel {
     @ObservationIgnored private let root: () async -> URL?
     @ObservationIgnored private let applier: RuleApplier?
     @ObservationIgnored private let itemIDs: () -> [ItemID]
+    @ObservationIgnored private let onSaved: () async -> Void
 
-    init(root: @escaping () async -> URL?, applier: RuleApplier?, itemIDs: @escaping () -> [ItemID]) {
+    init(
+        root: @escaping () async -> URL?, applier: RuleApplier?, onSaved: @escaping () async -> Void = {},
+        itemIDs: @escaping () -> [ItemID]
+    ) {
+        self.onSaved = onSaved
         self.root = root
         self.applier = applier
         self.itemIDs = itemIDs
@@ -53,6 +58,7 @@ final class RulesModel {
         guard state == .ready, let root = await root() else { throw RulesModelError.notWritable }
         try RuleFile.save(RuleSet(rules: new), to: root)
         rules = new
+        await onSaved()
     }
 
     /// Keeps a copy of the unreadable file as `rules.json.broken`, then starts an empty rules file.
@@ -62,6 +68,7 @@ final class RulesModel {
         try RuleFile.save(.empty, to: root)
         rules = []
         state = .ready
+        await onSaved()
     }
 
     func preview() async -> RulePreview? {

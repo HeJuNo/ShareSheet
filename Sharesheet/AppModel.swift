@@ -65,6 +65,8 @@ enum AnalysisSettings {
     @ObservationIgnored private let analyzer: DocumentAnalyzer?
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let isForeground: @Sendable () async -> Bool
+    /// Which aggregate the list footer shows per field name, by the rules; see `fieldStats`.
+    private(set) var fieldAggregates: [String: FieldAggregate] = [:]
     /// Where rules moved items to; the detail screen still holds the id from before.
     @ObservationIgnored private let redirects: MoveRedirects
     let rulesStatus: RulesStatus
@@ -100,7 +102,7 @@ enum AnalysisSettings {
     /// The rules editor's model on this library.
     func makeRulesModel() -> RulesModel {
         RulesModel(
-            root: rulesRoot, applier: ruleApplier,
+            root: rulesRoot, applier: ruleApplier, onSaved: { [weak self] in await self?.reloadFieldAggregates() },
             itemIDs: { [index] in ((try? index.search(LibraryQuery(scope: .all))) ?? []).map(\.id) })
     }
 
@@ -154,6 +156,7 @@ enum AnalysisSettings {
             collections = []
         }
         reloadFromIndex()
+        await reloadFieldAggregates()
         startCaptures()
         startAnalysis()
     }
@@ -381,10 +384,58 @@ enum AnalysisSettings {
         }
     }
 
-    /// The sums of the number fields over the items of `query`, for the footer of a list.
-    func fieldSums(_ query: LibraryQuery) -> [FieldSum] {
+    /// One line per number field over the items of `query`, for the footer of a list: the aggregate the rules choose
+    /// for that field (the sum when none does), and how many items have it. `value` is nil when it has no result.
+    func fieldStats(_ query: LibraryQuery) -> [FieldStat] {
         _ = revision
-        return (try? index.fieldSums(query)) ?? []
+        guard let values = try? index.fieldValues(query) else { return [] }
+        return values.keys.sorted().map { name in
+            let aggregate = fieldAggregates[name] ?? .sum
+            return FieldStat(name: name, aggregate: aggregate, value: aggregate.value(of: values[name] ?? []), count: values[name]?.count ?? 0)
+        }
+    }
+
+    /// Reads which aggregate each field uses from `rules.json`; the list footers follow it.
+    func reloadFieldAggregates() async {
+        guard let root = await rulesRoot(), case .rules(let set) = RuleFile.load(from: root) else {
+            fieldAggregates = [:]
+            return
+        }
+        fieldAggregates = set.aggregates
+    }
+
+    /// Sets a field by hand: rules leave it alone from now on. Returns the saved item.
+    @discardableResult
+    func setField(_ id: ItemID, name: String, value: FieldValue) async throws -> Item {
+        try await changeFields(id) { item in
+            item.fields[name] = value
+            item.fieldsManual.insert(name)
+            item.fieldsDeleted.remove(name)
+        }
+    }
+
+    /// Deletes a field by hand: rules do not set it again. Returns the saved item.
+    @discardableResult
+    func deleteField(_ id: ItemID, name: String) async throws -> Item {
+        try await changeFields(id) { item in
+            item.fields[name] = nil
+            item.fieldsManual.remove(name)
+            item.fieldsDeleted.insert(name)
+        }
+    }
+
+    private func changeFields(_ id: ItemID, _ change: @escaping @Sendable (inout Item) -> Void) async throws -> Item {
+        let store = try requireStore()
+        let saved: Item
+        do {
+            saved = try await store.modify(redirects.current(id), change)
+        } catch {
+            Self.log.error("Changing a field failed: \(error)")
+            throw error
+        }
+        try? index.upsert(saved)
+        reloadFromIndex()
+        return saved
     }
 
     /// Favicons are stored by full host (`www.` included), as the capture runner saves them.
@@ -641,4 +692,13 @@ extension AppModel {
         }
         fatalError("No writable location for the library index")
     }
+}
+
+/// A number field over a list: its aggregate, the result (nil when the values do not allow one) and the item count.
+struct FieldStat: Equatable, Identifiable, Sendable {
+    var name: String
+    var aggregate: FieldAggregate
+    var value: Double?
+    var count: Int
+    var id: String { name }
 }

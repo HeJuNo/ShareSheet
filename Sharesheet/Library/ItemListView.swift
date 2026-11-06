@@ -157,7 +157,7 @@ struct ItemResults: View {
             }
         }
         .listStyle(.plain)
-        .safeAreaInset(edge: .bottom) { FieldSumsBar(sums: model.fieldSums(query)) }
+        .safeAreaInset(edge: .bottom) { FieldSumsBar(stats: model.fieldStats(query)) }
         .overlay {
             if items.isEmpty {
                 if let text = query.text {
@@ -195,14 +195,14 @@ struct ItemResults: View {
 
 /// One line per number field of the listed items: its sum and how many items have it.
 struct FieldSumsBar: View {
-    let sums: [FieldSum]
+    let stats: [FieldStat]
 
     var body: some View {
-        if !sums.isEmpty {
+        if !stats.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(sums, id: \.name) { sum in
-                    let total = sum.total.formatted(.number.precision(.fractionLength(0...2)))
-                    Text(verbatim: "\(sum.name): \(total) (\(sum.count))")
+                ForEach(stats) { stat in
+                    let value = stat.value?.formatted(.number.precision(.fractionLength(0...2))) ?? "–"
+                    Text(verbatim: "\(stat.name): \(value) (\(stat.count))")
                         .font(.footnote.monospacedDigit())
                 }
             }

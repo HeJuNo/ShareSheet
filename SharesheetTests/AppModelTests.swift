@@ -38,12 +38,13 @@ struct ModelEnv {
     }
 
     func model(
-        iCloud: Bool = true, temporaryRoot: URL? = nil, redirects: MoveRedirects = MoveRedirects()
+        iCloud: Bool = true, temporaryRoot: URL? = nil, redirects: MoveRedirects = MoveRedirects(), rulesRoot: URL? = nil
     ) -> AppModel {
         let store = self.store
         return AppModel(
             storeFactory: { iCloud ? store : nil }, index: index, inbox: inbox, runner: nil,
-            extensionTemporaryRoot: temporaryRoot, redirects: redirects)
+            extensionTemporaryRoot: temporaryRoot, redirects: redirects,
+            rulesRoot: { if let rulesRoot { rulesRoot } else { await ICloudLocator.libraryRoot() } })
     }
 
     func enqueueText(_ title: String) throws {

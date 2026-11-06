@@ -56,19 +56,6 @@ public struct IndexedItem: Identifiable, Equatable, Sendable {
     }
 }
 
-/// The sum of a number field over the items of a query that have it.
-public struct FieldSum: Equatable, Sendable {
-    public var name: String
-    public var total: Double
-    public var count: Int
-
-    public init(name: String, total: Double, count: Int) {
-        self.name = name
-        self.total = total
-        self.count = count
-    }
-}
-
 public struct LibraryCounts: Equatable, Sendable {
     public var all = 0, unsorted = 0, favorites = 0, highlights = 0
     public var byType: [ItemType: Int] = [:]
@@ -414,7 +401,7 @@ public final class LibraryIndex: Sendable {
         }
     }
 
-    /// The join, conditions and arguments that narrow `items` to a query; shared by `search` and `fieldSums`.
+    /// The join, conditions and arguments that narrow `items` to a query; shared by `search` and `fieldValues`.
     private static func filter(for query: LibraryQuery) -> (join: String, conditions: [String], args: StatementArguments, hasText: Bool) {
         var join = ""
         var conditions: [String] = []
@@ -452,17 +439,20 @@ public final class LibraryIndex: Sendable {
         return (join, conditions, args, match != nil)
     }
 
-    public func fieldSums(_ query: LibraryQuery) throws -> [FieldSum] {
+    /// The values of every number field over the items of `query`, by field name; only items that have the field
+    /// count, and only `number` fields (a text field of the same name is not mixed in).
+    public func fieldValues(_ query: LibraryQuery) throws -> [String: [Double]] {
         try pool.read { db in
             let filter = Self.filter(for: query)
             var sql = """
-                SELECT item_fields.name AS name, SUM(item_fields.number) AS total, COUNT(*) AS count FROM items
+                SELECT item_fields.name AS name, item_fields.number AS number FROM items
                 """ + filter.join + " JOIN item_fields ON item_fields.item_id = items.id AND item_fields.type = 'number'"
             if !filter.conditions.isEmpty { sql += " WHERE " + filter.conditions.joined(separator: " AND ") }
-            sql += " GROUP BY item_fields.name ORDER BY item_fields.name"
-            return try Row.fetchAll(db, sql: sql, arguments: filter.args).map {
-                FieldSum(name: $0["name"], total: $0["total"], count: $0["count"])
+            var values: [String: [Double]] = [:]
+            for row in try Row.fetchAll(db, sql: sql, arguments: filter.args) {
+                values[row["name"], default: []].append(row["number"])
             }
+            return values
         }
     }
 
