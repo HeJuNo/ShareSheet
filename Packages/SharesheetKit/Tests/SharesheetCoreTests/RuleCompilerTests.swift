@@ -119,25 +119,45 @@ import Testing
 }
 
 @Suite struct RuleCompilerFieldTests {
+    private func definitions(_ compiled: CompiledRules) throws -> [FieldDefinition] {
+        try compiled.values.compactMap { try? JSONDecoder().decode(FieldDefinition.self, from: Data($0.utf8)) }
+    }
+
     @Test func fieldsAndTitleTravelAsValuesAndComeBackInRuleOrder() throws {
         let cond = RuleCondition(field: .text, op: .contains, value: "Rechnung")
         let set = RuleSet(rules: [
             Rule(id: "a", name: "a", enabled: true, conditions: [cond], actions: [
-                .setField(name: "Betrag", pattern: "Gesamt {Zahl}"), .setField(name: "Datum", pattern: "am {Datum}"),
+                .setField(name: "Betrag", pattern: "Gesamt {Zahl}", op: .multiply, operand: 1.19),
+                .setField(name: "Datum", pattern: "am {Datum}"),
+                .setComputed(name: "Netto", formula: "{Betrag} / 1.19"),
                 .setTitle("Tesla {Datum}"), .setField(name: "kaputt", pattern: "ohne"),
+                .setComputed(name: "leer", formula: "1 + 2"),
             ])
         ])
         let compiled = try #require(RuleCompiler.compile(set))
-        #expect(compiled.values == ["rechnung", "Betrag", "Gesamt {Zahl}", "Datum", "am {Datum}", "Tesla {Datum}"])
+        #expect(compiled.values.count == 5)
+        #expect(compiled.values[0] == "rechnung")
+        #expect(compiled.values[4] == "Tesla {Datum}")
+        let expected = [
+            FieldDefinition(name: "Betrag", pattern: "Gesamt {Zahl}", op: .multiply, operand: 1.19),
+            FieldDefinition(name: "Datum", pattern: "am {Datum}"),
+            FieldDefinition(name: "Netto", formula: "{Betrag} / 1.19"),
+        ]
+        #expect(try definitions(compiled) == expected)
         let graph = try #require(JSONSerialization.jsonObject(with: compiled.decision) as? [String: Any])
         let table = try #require((graph["nodes"] as? [[String: Any]])?.first { $0["type"] as? String == "decisionTableNode" })
         let row = try #require(((table["content"] as? [String: Any])?["rules"] as? [[String: Any]])?.first)
-        #expect(row["out_setField"] as? String == "[rv[1], rv[2], rv[3], rv[4]]")
-        #expect(row["out_setTitle"] as? String == "rv[5]")
+        #expect(row["out_setField"] as? String == "[rv[1], rv[2], rv[3]]")
+        #expect(row["out_setTitle"] as? String == "rv[4]")
 
-        let result = Data(#"[{"setField":["A","p1","B","p2"],"setTitle":"T1"},{"setField":["A","p1"],"setTitle":"T2"},{"setField":["odd"]}]"#.utf8)
+        let first = String(decoding: try JSONEncoder().encode(expected[0]), as: UTF8.self)
+        let second = String(decoding: try JSONEncoder().encode(expected[1]), as: UTF8.self)
+        let result = Data(
+            (try JSONSerialization.data(withJSONObject: [
+                ["setField": [first, second], "setTitle": "T1"], ["setField": [first], "setTitle": "T2"], ["setField": ["kaputt"]],
+            ])))
         let outcome = RuleCompiler.outcome(fromResult: result)
-        #expect(outcome.fieldPatterns == [FieldPattern(name: "A", pattern: "p1"), FieldPattern(name: "B", pattern: "p2")])
+        #expect(outcome.fieldDefinitions == [expected[0], expected[1]])
         #expect(outcome.titleTemplates == ["T1", "T2"])
     }
 }

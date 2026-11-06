@@ -16,6 +16,21 @@ public struct RuleCondition: Codable, Equatable, Sendable {
     }
 }
 
+/// Arithmetic applied to a number read from the text, after reading it.
+public enum FieldOperator: String, Codable, CaseIterable, Sendable {
+    case add = "+", subtract = "-", multiply = "*", divide = "/"
+
+    /// nil on a division by zero.
+    public func apply(_ value: Double, _ operand: Double) -> Double? {
+        switch self {
+        case .add: value + operand
+        case .subtract: value - operand
+        case .multiply: value * operand
+        case .divide: operand == 0 ? nil : value / operand
+        }
+    }
+}
+
 /// JSON: `{"addTag":"apple"}` or `{"moveTo":"Sozialversicherung"}`.
 public enum RuleAction: Codable, Equatable, Sendable {
     case addTag(String)
@@ -23,12 +38,19 @@ public enum RuleAction: Codable, Equatable, Sendable {
     /// A pattern with `{Datum}` and optionally `{Uhrzeit}`, see `DateExtractor`.
     case setDate(String)
     /// Reads a typed field from the text by a pattern with one of `{Zahl}`, `{Datum}`, `{Text}`, see `FieldExtractor`.
-    case setField(name: String, pattern: String)
+    /// With `op` and `operand` the number read is calculated on (`{Zahl}` patterns only); `aggregate` is how lists show it.
+    case setField(name: String, pattern: String, aggregate: FieldAggregate = .sum, op: FieldOperator? = nil, operand: Double? = nil)
+    /// A field calculated from other fields by a formula such as `{Netto} + {MwSt}`, see `FormulaEvaluator`.
+    case setComputed(name: String, formula: String, aggregate: FieldAggregate = .sum)
     /// A title with field names in braces, see `TitleTemplate`.
     case setTitle(String)
 
-    private enum Key: String, CodingKey { case addTag, moveTo, setDate, setField, setTitle }
-    private struct FieldBody: Codable { var name: String; var pattern: String }
+    private enum Key: String, CodingKey { case addTag, moveTo, setDate, setField, setComputed, setTitle }
+    private struct FieldBody: Codable {
+        var name: String; var pattern: String
+        var aggregate: FieldAggregate?; var op: FieldOperator?; var operand: Double?
+    }
+    private struct ComputedBody: Codable { var name: String; var formula: String; var aggregate: FieldAggregate? }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: Key.self)
@@ -39,7 +61,9 @@ public enum RuleAction: Codable, Equatable, Sendable {
         } else if let pattern = try container.decodeIfPresent(String.self, forKey: .setDate) {
             self = .setDate(pattern)
         } else if let body = try container.decodeIfPresent(FieldBody.self, forKey: .setField) {
-            self = .setField(name: body.name, pattern: body.pattern)
+            self = .setField(name: body.name, pattern: body.pattern, aggregate: body.aggregate ?? .sum, op: body.op, operand: body.operand)
+        } else if let body = try container.decodeIfPresent(ComputedBody.self, forKey: .setComputed) {
+            self = .setComputed(name: body.name, formula: body.formula, aggregate: body.aggregate ?? .sum)
         } else if let template = try container.decodeIfPresent(String.self, forKey: .setTitle) {
             self = .setTitle(template)
         } else {
@@ -53,7 +77,12 @@ public enum RuleAction: Codable, Equatable, Sendable {
         case .addTag(let tag): try container.encode(tag, forKey: .addTag)
         case .moveTo(let collection): try container.encode(collection, forKey: .moveTo)
         case .setDate(let pattern): try container.encode(pattern, forKey: .setDate)
-        case .setField(let name, let pattern): try container.encode(FieldBody(name: name, pattern: pattern), forKey: .setField)
+        case .setField(let name, let pattern, let aggregate, let op, let operand):
+            let body = FieldBody(
+                name: name, pattern: pattern, aggregate: aggregate == .sum ? nil : aggregate, op: op, operand: operand)
+            try container.encode(body, forKey: .setField)
+        case .setComputed(let name, let formula, let aggregate):
+            try container.encode(ComputedBody(name: name, formula: formula, aggregate: aggregate == .sum ? nil : aggregate), forKey: .setComputed)
         case .setTitle(let template): try container.encode(template, forKey: .setTitle)
         }
     }
@@ -115,14 +144,25 @@ public struct Rule: Codable, Equatable, Sendable, Identifiable {
     public var isUsable: Bool {
         !conditions.isEmpty
             && conditions.allSatisfy { !RuleContext.normalized($0.value).isEmpty }
-            && actions.contains { action in
-                switch action {
-                case .addTag(let value), .moveTo(let value): !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                case .setDate(let pattern): DateExtractor.isValid(pattern: pattern)
-                case .setField(let name, let pattern): Rule.isUsable(fieldName: name) && FieldExtractor.isValid(pattern: pattern)
-                case .setTitle(let template): !TitleTemplate.placeholders(in: template).isEmpty
-                }
-            }
+            && actions.contains(where: \.isUsable)
+    }
+}
+
+extension RuleAction {
+    /// Whether the action does something; an unusable action is ignored (a rule with only such actions is dropped).
+    var isUsable: Bool {
+        switch self {
+        case .addTag(let value), .moveTo(let value): !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .setDate(let pattern): DateExtractor.isValid(pattern: pattern)
+        case .setField(let name, let pattern, _, let op, let operand):
+            Rule.isUsable(fieldName: name) && FieldExtractor.isValid(pattern: pattern)
+                && ((op == nil && operand == nil)
+                    || (op != nil && operand != nil && pattern.lowercased().contains("{zahl}")
+                        && !(op == .divide && operand == 0)))
+        case .setComputed(let name, let formula, _):
+            Rule.isUsable(fieldName: name) && !(FormulaEvaluator.references(in: formula) ?? []).isEmpty
+        case .setTitle(let template): !TitleTemplate.placeholders(in: template).isEmpty
+        }
     }
 }
 
@@ -136,6 +176,22 @@ public struct RuleSet: Codable, Equatable, Sendable {
     public init(version: Int = RuleSet.currentVersion, rules: [Rule]) {
         self.version = version
         self.rules = rules
+    }
+
+    /// How lists show each field: the first usable, enabled rule action with that name decides; others default to sum.
+    public var aggregates: [String: FieldAggregate] {
+        var result: [String: FieldAggregate] = [:]
+        for rule in rules where rule.enabled && rule.isUsable {
+            for action in rule.actions {
+                switch action {
+                case .setField(let name, _, let aggregate, _, _), .setComputed(let name, _, let aggregate):
+                    let key = name.trimmingCharacters(in: .whitespaces)
+                    if action.isUsable, result[key] == nil { result[key] = aggregate }
+                default: break
+                }
+            }
+        }
+        return result
     }
 
     public func encoded() throws -> Data {

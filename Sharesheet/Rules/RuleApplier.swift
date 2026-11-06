@@ -92,8 +92,9 @@ actor RuleApplier: RuleApplying {
         }
         // First pattern with a readable value wins per field name; equal values are not changes.
         var read: [String: FieldValue] = [:]
-        for pattern in outcome.fieldPatterns where read[pattern.name] == nil {
-            if let value = FieldExtractor.value(in: text, pattern: pattern.pattern) { read[pattern.name] = value }
+        for definition in outcome.fieldDefinitions where read[definition.name] == nil {
+            guard let pattern = definition.pattern, let value = FieldExtractor.value(in: text, pattern: pattern) else { continue }
+            read[definition.name] = value
         }
         let fields = read.filter { !Self.same($0.value, item.fields[$0.key]) }
         var title: String?

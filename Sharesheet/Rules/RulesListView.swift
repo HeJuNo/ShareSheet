@@ -201,7 +201,7 @@ extension Rule {
         case .addTag(let tag): "Tag \(tag)"
         case .moveTo(let collection): "Move to \(collection)"
         case .setDate: "Set date from text"
-        case .setField(let name, _): "Set \(name)"
+        case .setField(let name, _, _, _, _), .setComputed(let name, _, _): "Set \(name)"
         case .setTitle: "Set title"
         case nil: "Rule"
         }
@@ -218,7 +218,8 @@ extension Rule {
             case .addTag(let tag): "tag \(tag)"
             case .moveTo(let collection): "move to \(collection)"
             case .setDate(let pattern): "set date from “\(pattern)”"
-            case .setField(let name, let pattern): "set \(name) from “\(pattern)”"
+            case .setField(let name, let pattern, _, _, _): "set \(name) from “\(pattern)”"
+            case .setComputed(let name, let formula, _): "set \(name) = \(formula)"
             case .setTitle(let template): "set title “\(template)”"
             }
         }.joined(separator: ", ")

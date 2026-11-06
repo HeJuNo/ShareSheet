@@ -1,12 +1,20 @@
 import Foundation
 
-public struct FieldPattern: Equatable, Sendable {
+/// One field a matching rule defines: read from the text by `pattern` (then calculated on by `op`/`operand`),
+/// or calculated from other fields by `formula`.
+public struct FieldDefinition: Codable, Equatable, Sendable {
     public var name: String
-    public var pattern: String
+    public var pattern: String?
+    public var formula: String?
+    public var op: FieldOperator?
+    public var operand: Double?
 
-    public init(name: String, pattern: String) {
+    public init(name: String, pattern: String? = nil, formula: String? = nil, op: FieldOperator? = nil, operand: Double? = nil) {
         self.name = name
         self.pattern = pattern
+        self.formula = formula
+        self.op = op
+        self.operand = operand
     }
 }
 
@@ -15,19 +23,19 @@ public struct RuleOutcome: Equatable, Sendable {
     public var moveTo: String?
     /// Date patterns of the matching rules, in rule order, without repeats.
     public var datePatterns: [String]
-    /// Field patterns of the matching rules, in rule order, without repeats.
-    public var fieldPatterns: [FieldPattern]
+    /// Field definitions of the matching rules, in rule order, without repeats.
+    public var fieldDefinitions: [FieldDefinition]
     /// Title templates of the matching rules, in rule order, without repeats.
     public var titleTemplates: [String]
 
     public init(
-        tags: [String], moveTo: String?, datePatterns: [String] = [], fieldPatterns: [FieldPattern] = [],
+        tags: [String], moveTo: String?, datePatterns: [String] = [], fieldDefinitions: [FieldDefinition] = [],
         titleTemplates: [String] = []
     ) {
         self.tags = tags
         self.moveTo = moveTo
         self.datePatterns = datePatterns
-        self.fieldPatterns = fieldPatterns
+        self.fieldDefinitions = fieldDefinitions
         self.titleTemplates = titleTemplates
     }
 }
@@ -111,12 +119,18 @@ public enum RuleCompiler {
                         dateReference = "rv[\(values.count)]"
                         values.append(pattern)
                     }
-                case .setField(let name, let pattern):
-                    if Rule.isUsable(fieldName: name), FieldExtractor.isValid(pattern: pattern) {
+                case .setField(let name, let pattern, _, let op, let operand):
+                    let definition = FieldDefinition(
+                        name: name.trimmingCharacters(in: .whitespaces), pattern: pattern, op: op, operand: operand)
+                    if action.isUsable {
                         fieldReferences.append("rv[\(values.count)]")
-                        fieldReferences.append("rv[\(values.count + 1)]")
-                        values.append(name.trimmingCharacters(in: .whitespaces))
-                        values.append(pattern)
+                        values.append(Self.json(definition))
+                    }
+                case .setComputed(let name, let formula, _):
+                    let definition = FieldDefinition(name: name.trimmingCharacters(in: .whitespaces), formula: formula)
+                    if action.isUsable {
+                        fieldReferences.append("rv[\(values.count)]")
+                        values.append(Self.json(definition))
                     }
                 case .setTitle(let template):
                     if titleReference == nil, !TitleTemplate.placeholders(in: template).isEmpty {
@@ -171,13 +185,14 @@ public enum RuleCompiler {
         var tags: [String] = []
         var move: String?
         var patterns: [String] = []
-        var fields: [FieldPattern] = []
+        var fields: [FieldDefinition] = []
         var titles: [String] = []
         for row in rows {
-            if let flat = row["setField"] as? [String] {
-                for index in stride(from: 0, to: flat.count - 1, by: 2) {
-                    let field = FieldPattern(name: flat[index], pattern: flat[index + 1])
-                    if !fields.contains(field) { fields.append(field) }
+            for json in (row["setField"] as? [String]) ?? [] {
+                if let definition = try? JSONDecoder().decode(FieldDefinition.self, from: Data(json.utf8)),
+                    !fields.contains(definition)
+                {
+                    fields.append(definition)
                 }
             }
             if let title = row["setTitle"] as? String, !title.isEmpty, !titles.contains(title) { titles.append(title) }
@@ -192,6 +207,12 @@ public enum RuleCompiler {
                 move = target
             }
         }
-        return RuleOutcome(tags: tags, moveTo: move, datePatterns: patterns, fieldPatterns: fields, titleTemplates: titles)
+        return RuleOutcome(tags: tags, moveTo: move, datePatterns: patterns, fieldDefinitions: fields, titleTemplates: titles)
+    }
+
+    private static func json(_ definition: FieldDefinition) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return String(decoding: (try? encoder.encode(definition)) ?? Data(), as: UTF8.self)
     }
 }

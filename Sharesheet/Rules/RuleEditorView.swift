@@ -138,7 +138,7 @@ private struct ActionRow: View {
     let tags: [String]
     let collections: [String]
 
-    private enum Kind: Hashable { case tag, move, date, field, title }
+    private enum Kind: Hashable { case tag, move, date, field, computed, title }
 
     private var kind: Binding<Kind> {
         Binding(
@@ -148,6 +148,7 @@ private struct ActionRow: View {
                 case .moveTo: .move
                 case .setDate: .date
                 case .setField: .field
+                case .setComputed: .computed
                 case .setTitle: .title
                 }
             },
@@ -158,6 +159,7 @@ private struct ActionRow: View {
                 case .move: action = .moveTo(value)
                 case .date: action = .setDate(value)
                 case .field: action = .setField(name: "", pattern: value)
+                case .computed: action = .setComputed(name: "", formula: value)
                 case .title: action = .setTitle(value)
                 }
             })
@@ -168,7 +170,8 @@ private struct ActionRow: View {
             get: {
                 switch action {
                 case .addTag(let value), .moveTo(let value), .setDate(let value), .setTitle(let value): value
-                case .setField(_, let pattern): pattern
+                case .setField(_, let pattern, _, _, _): pattern
+                case .setComputed(_, let formula, _): formula
                 }
             },
             set: { value in
@@ -176,7 +179,9 @@ private struct ActionRow: View {
                 case .addTag: action = .addTag(value)
                 case .moveTo: action = .moveTo(value)
                 case .setDate: action = .setDate(value)
-                case .setField(let name, _): action = .setField(name: name, pattern: value)
+                case .setField(let name, _, let aggregate, let op, let operand):
+                    action = .setField(name: name, pattern: value, aggregate: aggregate, op: op, operand: operand)
+                case .setComputed(let name, _, let aggregate): action = .setComputed(name: name, formula: value, aggregate: aggregate)
                 case .setTitle: action = .setTitle(value)
                 }
             })
@@ -184,8 +189,58 @@ private struct ActionRow: View {
 
     private var fieldName: Binding<String> {
         Binding(
-            get: { if case .setField(let name, _) = action { name } else { "" } },
-            set: { name in if case .setField(_, let pattern) = action { action = .setField(name: name, pattern: pattern) } })
+            get: {
+                switch action {
+                case .setField(let name, _, _, _, _), .setComputed(let name, _, _): name
+                default: ""
+                }
+            },
+            set: { name in
+                switch action {
+                case .setField(_, let pattern, let aggregate, let op, let operand):
+                    action = .setField(name: name, pattern: pattern, aggregate: aggregate, op: op, operand: operand)
+                case .setComputed(_, let formula, let aggregate): action = .setComputed(name: name, formula: formula, aggregate: aggregate)
+                default: break
+                }
+            })
+    }
+
+    @State private var operandText = ""
+
+    private var aggregate: Binding<FieldAggregate> {
+        Binding(
+            get: {
+                switch action {
+                case .setField(_, _, let aggregate, _, _), .setComputed(_, _, let aggregate): aggregate
+                default: .sum
+                }
+            },
+            set: { aggregate in
+                switch action {
+                case .setField(let name, let pattern, _, let op, let operand):
+                    action = .setField(name: name, pattern: pattern, aggregate: aggregate, op: op, operand: operand)
+                case .setComputed(let name, let formula, _): action = .setComputed(name: name, formula: formula, aggregate: aggregate)
+                default: break
+                }
+            })
+    }
+
+    private var op: Binding<FieldOperator?> {
+        Binding(
+            get: { if case .setField(_, _, _, let op, _) = action { op } else { nil } },
+            set: { op in
+                if case .setField(let name, let pattern, let aggregate, _, let operand) = action {
+                    action = .setField(name: name, pattern: pattern, aggregate: aggregate, op: op, operand: op == nil ? nil : operand)
+                }
+            })
+    }
+
+    private func setOperand(_ text: String) {
+        if case .setField(let name, let pattern, let aggregate, let op, _) = action {
+            action = .setField(
+                name: name, pattern: pattern, aggregate: aggregate, op: op,
+                operand: Double(text.replacingOccurrences(of: ",", with: ".")))
+        }
     }
 
     var body: some View {
@@ -195,9 +250,10 @@ private struct ActionRow: View {
                 Text("Move to collection").tag(Kind.move)
                 Text("Set date from text").tag(Kind.date)
                 Text("Set field from text").tag(Kind.field)
+                Text("Calculate field").tag(Kind.computed)
                 Text("Set title").tag(Kind.title)
             }
-            if kind.wrappedValue == .field {
+            if kind.wrappedValue == .field || kind.wrappedValue == .computed {
                 TextField("Field name", text: fieldName)
             }
             HStack {
@@ -226,7 +282,7 @@ private struct ActionRow: View {
                         .foregroundStyle(.orange)
                 }
             }
-            if case .setField(_, let pattern) = action {
+            if case .setField(_, let pattern, _, _, _) = action {
                 Text("Use {Zahl}, {Datum} or {Text} once, e.g. Gesamtbetrag (EUR) {Zahl}.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -234,6 +290,43 @@ private struct ActionRow: View {
                     Text("The pattern needs exactly one of {Zahl}, {Datum} or {Text}.")
                         .font(.footnote)
                         .foregroundStyle(.orange)
+                }
+            }
+            if case .setField = action {
+                Picker("Calculation", selection: op) {
+                    Text("None").tag(FieldOperator?.none)
+                    ForEach(FieldOperator.allCases, id: \.self) { Text(verbatim: $0.symbol).tag(FieldOperator?.some($0)) }
+                }
+                if op.wrappedValue != nil {
+                    // Own text state so a half-typed number such as "1." is not reformatted while typing.
+                    TextField("Number", text: $operandText)
+                        .keyboardType(.numbersAndPunctuation)
+                        .onChange(of: operandText) { _, text in setOperand(text) }
+                        .onAppear {
+                            if case .setField(_, _, _, _, .some(let value)) = action { operandText = "\(value)" }
+                        }
+                    if case .setField(_, let pattern, _, .some, let value) = action, !pattern.lowercased().contains("{zahl}") || value == nil
+                        || (op.wrappedValue == .divide && value == 0)
+                    {
+                        Text("Calculations need a {Zahl} pattern and a number, and cannot divide by 0.")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+            if case .setComputed(_, let formula, _) = action {
+                Text("Use field names in braces with + − × ÷ and parentheses, e.g. {Netto} + {MwSt}. Fields without a value leave this field unchanged.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                if !formula.isEmpty, (FormulaEvaluator.references(in: formula) ?? []).isEmpty {
+                    Text("The formula needs at least one field name in braces and must be valid.")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+            }
+            if kind.wrappedValue == .field || kind.wrappedValue == .computed {
+                Picker("Lists show", selection: aggregate) {
+                    ForEach(FieldAggregate.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
             }
             if case .setTitle(let template) = action {
@@ -254,7 +347,33 @@ private struct ActionRow: View {
         case .tag: "Tag"
         case .move: "Collection"
         case .date, .field: "Pattern"
+        case .computed: "Formula"
         case .title: "Template"
+        }
+    }
+}
+
+extension FieldAggregate {
+    var title: LocalizedStringKey {
+        switch self {
+        case .sum: "Sum"
+        case .average: "Average"
+        case .median: "Median"
+        case .min: "Minimum"
+        case .max: "Maximum"
+        case .stdDev: "Standard deviation"
+        case .count: "Count"
+        }
+    }
+}
+
+extension FieldOperator {
+    var symbol: String {
+        switch self {
+        case .add: "+"
+        case .subtract: "−"
+        case .multiply: "×"
+        case .divide: "÷"
         }
     }
 }

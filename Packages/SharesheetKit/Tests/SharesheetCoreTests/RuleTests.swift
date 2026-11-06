@@ -123,3 +123,46 @@ import Testing
         #expect(try RuleSet.decode(RuleSet(rules: [good]).encoded()).rules == [good])
     }
 }
+
+@Suite struct RuleAggregateAndComputeTests {
+    private let cond = RuleCondition(field: .text, op: .contains, value: "Rechnung")
+    private func rule(_ actions: [RuleAction], enabled: Bool = true) -> Rule {
+        Rule(id: "r", name: "r", enabled: enabled, conditions: [cond], actions: actions)
+    }
+
+    @Test func newFieldSettingsRoundTripAndOldFilesStillLoad() throws {
+        let all = rule([
+            .setField(name: "A", pattern: "x {Zahl}", aggregate: .average, op: .multiply, operand: 1.19),
+            .setComputed(name: "B", formula: "{A} + 1", aggregate: .max),
+        ])
+        #expect(try RuleSet.decode(RuleSet(rules: [all]).encoded()).rules == [all])
+        let old = Data(#"{"version":1,"rules":[{"id":"r","name":"r","enabled":true,"conditions":[{"field":"text","op":"contains","value":"x"}],"actions":[{"setField":{"name":"A","pattern":"x {Zahl}"}}]}]}"#.utf8)
+        #expect(try RuleSet.decode(old).rules[0].actions == [.setField(name: "A", pattern: "x {Zahl}")])
+        let plain = String(decoding: try RuleSet(rules: [rule([.setField(name: "A", pattern: "x {Zahl}")])]).encoded(), as: UTF8.self)
+        #expect(!plain.contains("aggregate") && !plain.contains("operand"))
+    }
+
+    @Test func operationsNeedBothPartsANumberPatternAndNoDivisionByZero() {
+        #expect(rule([.setField(name: "A", pattern: "x {Zahl}", op: .multiply, operand: 2)]).isUsable)
+        #expect(!rule([.setField(name: "A", pattern: "x {Zahl}", op: .multiply)]).isUsable)
+        #expect(!rule([.setField(name: "A", pattern: "x {Zahl}", operand: 2)]).isUsable)
+        #expect(!rule([.setField(name: "A", pattern: "x {Text}", op: .add, operand: 2)]).isUsable)
+        #expect(!rule([.setField(name: "A", pattern: "x {Zahl}", op: .divide, operand: 0)]).isUsable)
+    }
+
+    @Test func computedFieldsNeedANameAndAFormulaWithAReference() {
+        #expect(rule([.setComputed(name: "Brutto", formula: "{Netto} + {MwSt}")]).isUsable)
+        #expect(!rule([.setComputed(name: "Brutto", formula: "1 + 2")]).isUsable)
+        #expect(!rule([.setComputed(name: "Brutto", formula: "{Netto} +")]).isUsable)
+        #expect(!rule([.setComputed(name: " ", formula: "{Netto}")]).isUsable)
+    }
+
+    @Test func theFirstUsableEnabledActionDecidesTheAggregateOfAName() {
+        let set = RuleSet(rules: [
+            rule([.setField(name: "Off", pattern: "x {Zahl}", aggregate: .min)], enabled: false),
+            rule([.setField(name: "A", pattern: "kaputt", aggregate: .min), .setField(name: "A", pattern: "x {Zahl}", aggregate: .max)]),
+            rule([.setField(name: "A", pattern: "y {Zahl}", aggregate: .median), .setComputed(name: "B", formula: "{A}", aggregate: .stdDev)]),
+        ])
+        #expect(set.aggregates == ["A": .max, "B": .stdDev])
+    }
+}
