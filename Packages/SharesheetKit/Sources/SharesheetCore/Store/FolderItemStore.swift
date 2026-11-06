@@ -2,12 +2,12 @@ import Foundation
 
 /// Items as Markdown files in a folder tree (the iCloud Drive library). All file access is
 /// coordinated, and mutations are serialised through an internal actor.
-public final class FolderItemStore: ItemStore {
+public final class FolderItemStore: ItemStore, TrashStore {
     private let root: URL
     private let worker: Worker
 
     public init(
-        root: URL, trash: any Trashing = SystemTrash(),
+        root: URL, trash: any Trashing = LibraryTrash(),
         onPlaceholder: @escaping @Sendable (URL) -> Void = { _ in }
     ) {
         self.root = root
@@ -49,6 +49,12 @@ public final class FolderItemStore: ItemStore {
     public func deleteCollection(_ path: CollectionPath, moveItemsTo destination: CollectionPath?) async throws {
         try await worker.deleteCollection(path, moveItemsTo: destination)
     }
+
+    public func trashedItems() async throws -> [TrashedItem] { try await worker.trashedItems() }
+    public func restore(_ id: String) async throws -> Item { try await worker.restore(id) }
+    public func purge(_ id: String) async throws { try await worker.purge(id) }
+    public func emptyTrash() async throws { try await worker.emptyTrash() }
+    public func purgeTrash(olderThan date: Date) async throws -> Int { try await worker.purgeTrash(olderThan: date) }
 
     public func changes() -> AsyncStream<Void> {
         AsyncStream { continuation in
@@ -232,6 +238,104 @@ private actor Worker {
         for path in Set(attachments) where !inUse.contains(path) {
             guard let url = regularFileURL(path) else { continue }
             try trashFile(url)
+        }
+    }
+
+    // MARK: Trash
+
+    private var trashURL: URL { root.appending(path: LibraryTrash.folderName, directoryHint: .isDirectory) }
+
+    private static func attachmentPaths(of item: Item) -> [String] {
+        [item.file, item.image, item.screenshot, item.screenshotDark, item.archive]
+            .compactMap { $0 }.filter { $0.hasPrefix(attachments + "/") }
+    }
+
+    /// Trashed items by path inside the trash, with their file's modification date as the time of deletion.
+    private func trashedEntries() throws -> [(id: String, item: Item, deletedAt: Date)] {
+        guard fm.fileExists(atPath: trashURL.path) else { return [] }
+        let base = trashURL.resolvingSymlinksInPath().path
+        var found: [(String, Item, Date)] = []
+        let walker = fm.enumerator(at: trashURL, includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey])
+        for case let url as URL in walker ?? NSEnumerator() {
+            guard url.pathExtension == "md" else { continue }
+            let path = url.resolvingSymlinksInPath().path
+            guard path.hasPrefix(base + "/") else { continue }
+            let relative = String(path.dropFirst(base.count + 1))
+            guard !relative.hasPrefix(Self.attachments + "/"),
+                let text = try? coordinated(reading: url, { try String(contentsOf: $0, encoding: .utf8) }),
+                let item = try? ItemCodec.decode(text, id: ItemID(relativePath: relative))
+            else { continue }
+            let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            found.append((relative, item, date))
+        }
+        return found
+    }
+
+    func trashedItems() throws -> [TrashedItem] {
+        try trashedEntries().sorted { $0.deletedAt > $1.deletedAt }
+            .map { TrashedItem(id: $0.id, title: $0.item.title, deletedAt: $0.deletedAt) }
+    }
+
+    func restore(_ id: String) throws -> Item {
+        guard let entry = try trashedEntries().first(where: { $0.id == id }) else { throw StoreError.notFound(id) }
+        let relative = id as NSString
+        let folder = CollectionPath(components: relative.deletingLastPathComponent.split(separator: "/").map(String.init))
+        try ensureDirectory(folder)
+        let name = FileNamer.uniqueName(
+            base: (relative.lastPathComponent as NSString).deletingPathExtension, ext: "md",
+            existing: Set(try entries(at: folder)))
+        let newID = ItemID(relativePath: (folder.components + [name]).joined(separator: "/"))
+        try coordinatedMove(from: trashURL.appending(path: id), to: try fileURL(newID.relativePath))
+        for path in Self.attachmentPaths(of: entry.item) {
+            let source = trashURL.appending(path: path), destination = root.appending(path: path)
+            guard fm.fileExists(atPath: source.path), !fm.fileExists(atPath: destination.path) else { continue }
+            try ensureDirectory(CollectionPath(components: [Self.attachments]))
+            try coordinatedMove(from: source, to: destination)
+        }
+        pruneEmptyTrashFolders()
+        var item = entry.item
+        item.id = newID
+        return item
+    }
+
+    func purge(_ id: String) throws {
+        guard fm.fileExists(atPath: trashURL.appending(path: id).path) else { throw StoreError.notFound(id) }
+        try removeFromTrash(trashURL.appending(path: id))
+        try cleanTrash()
+    }
+
+    func emptyTrash() throws {
+        guard fm.fileExists(atPath: trashURL.path) else { return }
+        for name in try fm.contentsOfDirectory(atPath: trashURL.path) { try removeFromTrash(trashURL.appending(path: name)) }
+    }
+
+    func purgeTrash(olderThan date: Date) throws -> Int {
+        let old = try trashedEntries().filter { $0.deletedAt < date }
+        for entry in old { try removeFromTrash(trashURL.appending(path: entry.id)) }
+        if !old.isEmpty { try cleanTrash() }
+        return old.count
+    }
+
+    private func removeFromTrash(_ url: URL) throws {
+        try coordinated(writing: url, options: .forDeleting) { try fm.removeItem(at: $0) }
+    }
+
+    /// Removes trashed attachments no trashed item refers to any more, and folders left empty.
+    private func cleanTrash() throws {
+        let used = Set(try trashedEntries().flatMap { Self.attachmentPaths(of: $0.item) })
+        let folder = trashURL.appending(path: Self.attachments)
+        for name in (try? fm.contentsOfDirectory(atPath: folder.path)) ?? [] where !used.contains("\(Self.attachments)/\(name)") {
+            try removeFromTrash(folder.appending(path: name))
+        }
+        pruneEmptyTrashFolders()
+    }
+
+    private func pruneEmptyTrashFolders() {
+        guard let walker = fm.enumerator(at: trashURL, includingPropertiesForKeys: [.isDirectoryKey]) else { return }
+        let folders = walker.compactMap { $0 as? URL }.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        for folder in folders.sorted(by: { $0.path.count > $1.path.count })
+        where ((try? fm.contentsOfDirectory(atPath: folder.path)) ?? ["x"]).isEmpty {
+            try? fm.removeItem(at: folder)
         }
     }
 
