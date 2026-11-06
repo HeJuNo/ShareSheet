@@ -357,4 +357,96 @@ struct RuleApplierTests {
         let applier = try applier(env, [rule(rechnung, [.setField(name: "Gesamtbetrag", pattern: "Gesamtbetrag (EUR) {Zahl}")])])
         #expect(await applier.plan(for: item.id) == nil)
     }
+
+    // MARK: Operations, formulas, hand-edited fields
+
+    @Test func anOperationIsCalculatedOnTheNumberRead() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: invoice)
+        let applier = try applier(env, [rule(rechnung, [
+            .setField(name: "Brutto", pattern: "Gesamtbetrag (EUR) {Zahl}", op: .multiply, operand: 2)])])
+        #expect(try #require(await applier.plan(for: item.id)).fields["Brutto"] == .number(9.54))
+        await applier.apply(to: item.id)
+        #expect(await applier.plan(for: item.id) == nil)
+    }
+
+    @Test func aDivisionByZeroLeavesTheFieldAlone() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: invoice)
+        // Built directly: such a rule is unusable in the editor, but a hand-edited file may contain it.
+        let applier = try applier(env, [rule(rechnung, [
+            .setField(name: "Brutto", pattern: "Gesamtbetrag (EUR) {Zahl}", op: .divide, operand: 0),
+            .addTag("x")])]) { _, _, _ in
+            RuleOutcome(tags: ["x"], moveTo: nil, fieldDefinitions: [
+                FieldDefinition(name: "Brutto", pattern: "Gesamtbetrag (EUR) {Zahl}", op: .divide, operand: 0)])
+        }
+        let plan = try #require(await applier.plan(for: item.id))
+        #expect(plan.fields.isEmpty)
+    }
+
+    @Test func aFormulaIsCalculatedFromFieldsReadInTheSameRun() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: "Netto 100\nSteuer 19\nRechnung")
+        let applier = try applier(env, [rule(rechnung, [
+            .setComputed(name: "Brutto", formula: "{Netto} + {Steuer}"),
+            .setField(name: "Netto", pattern: "Netto {Zahl}"),
+            .setField(name: "Steuer", pattern: "Steuer {Zahl}"),
+            .setTitle("Rechnung {Brutto}")])])
+        let plan = try #require(await applier.plan(for: item.id))
+        #expect(plan.fields["Brutto"] == .number(119))
+        #expect(plan.title == "Rechnung 119")
+        await applier.apply(to: item.id)
+        #expect(await applier.plan(for: item.id) == nil)
+    }
+
+    @Test func formulasMayDependOnFormulasInAnyRuleOrder() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: "Netto 10\nRechnung")
+        let applier = try applier(env, [
+            rule(rechnung, [.setComputed(name: "C", formula: "{B} * 2")]),
+            rule(rechnung, [.setComputed(name: "B", formula: "{A} + 1")]),
+            rule(rechnung, [.setField(name: "A", pattern: "Netto {Zahl}")]),
+        ])
+        let plan = try #require(await applier.plan(for: item.id))
+        #expect(plan.fields["B"] == .number(11) && plan.fields["C"] == .number(22))
+    }
+
+    @Test func aStaleFormulaResultIsNotUsedByItsDependents() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: "Netto 10\nRechnung")
+        _ = try await env.store.modify(item.id) { $0.fields = ["A": .number(1), "B": .number(2), "C": .number(4)] }
+        let applier = try applier(env, [rule(rechnung, [
+            .setComputed(name: "C", formula: "{B} * 2"), .setComputed(name: "B", formula: "{A} + 1"),
+            .setField(name: "A", pattern: "Netto {Zahl}")])])
+        let plan = try #require(await applier.plan(for: item.id))
+        #expect(plan.fields["C"] == .number(22), "C follows the new B, not the stored one")
+    }
+
+    @Test func circularFormulasAndMissingFieldsSetNothingAndTerminate() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: "Rechnung")
+        let applier = try applier(env, [rule(rechnung, [
+            .setComputed(name: "A", formula: "{B} + 1"), .setComputed(name: "B", formula: "{A} + 1"),
+            .setComputed(name: "C", formula: "{Fehlt} + 1"), .setComputed(name: "D", formula: "1 / ({X} - {X})")])])
+        #expect(await applier.plan(for: item.id) == nil)
+    }
+
+    @Test func aHandEditedOrDeletedFieldIsLeftAloneByPatternsAndFormulas() async throws {
+        let env = try ModelEnv()
+        let item = try await addDocument(env, text: invoice)
+        _ = try await env.store.modify(item.id) {
+            $0.fields = ["Gesamtbetrag": .number(1)]
+            $0.fieldsManual = ["Gesamtbetrag"]
+            $0.fieldsDeleted = ["Doppelt"]
+        }
+        let applier = try applier(env, [rule(rechnung, [
+            .setField(name: "Gesamtbetrag", pattern: "Gesamtbetrag (EUR) {Zahl}"),
+            .setComputed(name: "Doppelt", formula: "{Gesamtbetrag} * 2"),
+            .setComputed(name: "Dreifach", formula: "{Gesamtbetrag} * 3")])])
+        let plan = try #require(await applier.plan(for: item.id))
+        #expect(plan.fields == ["Dreifach": .number(3)], "the hand-set value is still an input for other formulas")
+        await applier.apply(to: item.id)
+        let saved = try await env.store.item(item.id)
+        #expect(saved.fields["Gesamtbetrag"] == .number(1) && saved.fields["Doppelt"] == nil)
+    }
 }

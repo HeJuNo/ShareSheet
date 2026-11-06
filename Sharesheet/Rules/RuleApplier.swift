@@ -90,12 +90,19 @@ actor RuleApplier: RuleApplying {
             date = outcome.datePatterns.lazy.compactMap { DateExtractor.date(in: text, pattern: $0) }.first
             if let found = date, abs(found.timeIntervalSince(item.created)) < 1 { date = nil }  // already that date
         }
+        // Fields set or deleted by hand are left alone; they still count as inputs of formulas.
+        let protected = item.fieldsManual.union(item.fieldsDeleted)
         // First pattern with a readable value wins per field name; equal values are not changes.
         var read: [String: FieldValue] = [:]
-        for definition in outcome.fieldDefinitions where read[definition.name] == nil {
-            guard let pattern = definition.pattern, let value = FieldExtractor.value(in: text, pattern: pattern) else { continue }
+        for definition in outcome.fieldDefinitions where read[definition.name] == nil && !protected.contains(definition.name) {
+            guard let pattern = definition.pattern, var value = FieldExtractor.value(in: text, pattern: pattern) else { continue }
+            if let op = definition.op, let operand = definition.operand, case .number(let number) = value {
+                guard let result = op.apply(number, operand), result.isFinite else { continue }
+                value = .number(result)
+            }
             read[definition.name] = value
         }
+        Self.calculate(outcome.fieldDefinitions, protected: protected, existing: item.fields, into: &read)
         let fields = read.filter { !Self.same($0.value, item.fields[$0.key]) }
         var title: String?
         if !item.titleManual {
@@ -145,7 +152,9 @@ actor RuleApplier: RuleApplying {
                 let saved = try await store.modify(current) { item in
                     for tag in tags where !DocumentAnalyzer.carries(item.tags, tag) { item.tags.append(tag) }
                     if let date, !item.createdManual { item.created = date }
-                    item.fields.merge(fields) { _, new in new }
+                    for (name, value) in fields where !item.fieldsManual.contains(name) && !item.fieldsDeleted.contains(name) {
+                        item.fields[name] = value
+                    }
                     if let title, !item.titleManual { item.title = title }
                 }
                 try? index.upsert(saved)
@@ -160,6 +169,42 @@ actor RuleApplier: RuleApplying {
         } catch {
             // Most often the item was deleted while the rules ran.
             Self.log.error("Applying the rules failed: \(error)")
+        }
+    }
+
+    /// Evaluates formula fields into `fields`. A formula runs once every field it names that is itself calculated by a
+    /// formula has been calculated in this run, so no stored result is used stale; circular or incomplete formulas never
+    /// run and leave their field as it was.
+    private static func calculate(
+        _ definitions: [FieldDefinition], protected: Set<String>, existing: [String: FieldValue],
+        into fields: inout [String: FieldValue]
+    ) {
+        var pending: [String: String] = [:]  // name -> formula, first definition wins
+        for definition in definitions {
+            guard let formula = definition.formula, !protected.contains(definition.name), fields[definition.name] == nil,
+                pending[definition.name] == nil
+            else { continue }
+            pending[definition.name] = formula
+        }
+        var settled = Set<String>()  // calculated, or given up on
+        var progressed = true
+        while progressed {
+            progressed = false
+            for (name, formula) in pending where !settled.contains(name) {
+                guard let references = FormulaEvaluator.references(in: formula),
+                    references.allSatisfy({ pending[$0] == nil || settled.contains($0) })
+                else { continue }
+                settled.insert(name)
+                progressed = true
+                var numbers: [String: Double] = [:]
+                for (key, value) in existing.merging(fields, uniquingKeysWith: { _, new in new }) {
+                    if case .number(let number) = value { numbers[key] = number }
+                }
+                for reference in references where pending[reference] != nil && fields[reference] == nil {
+                    numbers[reference] = nil  // given up on: not usable, even if an older result is stored
+                }
+                if let value = FormulaEvaluator.evaluate(formula, fields: numbers) { fields[name] = .number(value) }
+            }
         }
     }
 
