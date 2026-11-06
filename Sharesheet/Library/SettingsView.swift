@@ -9,6 +9,8 @@ struct SettingsView: View {
     @State private var confirmsAnalyzeAgain = false
     @AppStorage(AnalysisSettings.enabledKey) private var analyzeDocuments = true
     @AppStorage(AnalysisSettings.tagModeKey) private var tagMode = TagMode.suggest.rawValue
+    @AppStorage(TrashSettings.autoEmptyKey) private var trashAutoEmpty = true
+    @AppStorage(TrashSettings.daysKey) private var trashDays = 30
 
     var body: some View {
         NavigationStack {
@@ -53,6 +55,19 @@ struct SettingsView: View {
                         Task { await model.retryFailedCaptures() }
                     }
                     .disabled(model.failedCaptureCount == 0 || !model.isICloudAvailable)
+                }
+                Section {
+                    Toggle("Empty Trash automatically", isOn: $trashAutoEmpty)
+                    Picker("Delete after", selection: $trashDays) {
+                        ForEach(TrashSettings.dayChoices, id: \.self) { Text("\($0) days").tag($0) }
+                    }
+                    .disabled(!trashAutoEmpty)
+                } header: {
+                    Text("Trash")
+                } footer: {
+                    Text(trashAutoEmpty
+                        ? "Deleted items are removed for good after this time."
+                        : "Deleted items stay in the Trash until you remove them.")
                 }
                 Section {
                     NavigationLink("Rules") { RulesListView(model: model.makeRulesModel()) }

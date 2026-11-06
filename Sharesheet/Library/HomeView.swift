@@ -78,6 +78,7 @@ struct HomeView: View {
                 }
             }
             .refreshable { await model.refresh() }
+            .safeAreaInset(edge: .bottom) { UndoDeleteBanner() }
             .sheet(isPresented: $showsSettings) { SettingsView() }
             .sheet(isPresented: $addsItem) {
                 AddItemView()
@@ -145,6 +146,17 @@ struct HomeView: View {
                         .labelStyle(.iconOnly)
                 }
                 .disabled(!model.isICloudAvailable)
+            }
+        }
+        Section {
+            NavigationLink {
+                TrashView()
+            } label: {
+                LabeledContent {
+                    if !model.trashed.isEmpty { Text(model.trashed.count, format: .number) }
+                } label: {
+                    Label("Trash", systemImage: "trash")
+                }
             }
         }
         Section("Filters") {

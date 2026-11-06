@@ -124,7 +124,6 @@ struct ItemResults: View {
 
     @Environment(AppModel.self) private var model
     let query: LibraryQuery
-    @State private var pendingDelete: IndexedItem?
     @State private var failure: Failure?
 
     var body: some View {
@@ -147,12 +146,12 @@ struct ItemResults: View {
                     .tint(.yellow)
                 }
                 .swipeActions(edge: .trailing) {
-                    Button {
-                        pendingDelete = item
+                    // No confirmation: the item goes to the Trash, and the banner offers Undo.
+                    Button(role: .destructive) {
+                        delete(item)
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
-                    .tint(.red)
                 }
             }
         }
@@ -166,14 +165,6 @@ struct ItemResults: View {
                     ContentUnavailableView("No items", systemImage: "tray")
                 }
             }
-        }
-        .confirmationDialog(
-            "Delete this item?", isPresented: $pendingDelete.isPresent(), titleVisibility: .visible,
-            presenting: pendingDelete
-        ) { item in
-            Button("Delete", role: .destructive) { delete(item) }
-        } message: { item in
-            Text(verbatim: item.title)
         }
         .alert(failure?.title ?? Text(verbatim: ""), isPresented: $failure.isPresent()) {
             Button("OK") {}

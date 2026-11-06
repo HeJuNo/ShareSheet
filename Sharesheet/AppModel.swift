@@ -32,6 +32,24 @@ enum AnalysisSettings {
     }
 }
 
+/// The user's choices for the Trash, read from `UserDefaults` whenever they are needed.
+enum TrashSettings {
+    static let autoEmptyKey = "trashAutoEmpty"
+    static let daysKey = "trashRetentionDays"
+    static let dayChoices = [7, 14, 30, 60, 90]
+
+    /// On unless switched off.
+    static func autoEmpties(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: autoEmptyKey) as? Bool ?? true
+    }
+
+    /// 30 when unset or not one of the choices.
+    static func retentionDays(_ defaults: UserDefaults = .standard) -> Int {
+        let days = defaults.integer(forKey: daysKey)
+        return dayChoices.contains(days) ? days : 30
+    }
+}
+
 /// Ties the iCloud library, the index, the share inbox and the capture runner together for the UI.
 @MainActor @Observable final class AppModel {
     nonisolated private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Sharesheet", category: "Library")
@@ -45,6 +63,10 @@ enum AnalysisSettings {
     private(set) var failedCaptureCount = 0
     /// Inbox requests the last import could not take in (failed or unreadable); they stay in the inbox.
     private(set) var lastImportProblemCount = 0
+    /// Deleted items, newest first.
+    private(set) var trashed: [TrashedItem] = []
+    /// The item the last delete moved to the Trash; the "Undo" banner offers to take it back.
+    var lastDeleted: TrashedItem?
     /// Bumped whenever the index changed, so views reading `items(_:)` re-render.
     private(set) var revision = 0
 
@@ -157,6 +179,7 @@ enum AnalysisSettings {
         }
         reloadFromIndex()
         await reloadFieldAggregates()
+        await purgeExpired()
         startCaptures()
         startAnalysis()
     }
@@ -530,6 +553,58 @@ enum AnalysisSettings {
         try? index.remove(id)
         if let source = gone?.file ?? gone?.archive { try? index.removeAnalysis(forSource: source) }
         reloadFromIndex()
+        await reloadTrash()
+        // The entry this delete just made is the newest one; the user may take it back for a few seconds.
+        lastDeleted = trashed.first
+    }
+
+    // MARK: Trash
+
+    private var trashStore: (any TrashStore)? { store as? any TrashStore }
+
+    func reloadTrash() async {
+        trashed = (try? await trashStore?.trashedItems()) ?? []
+    }
+
+    /// Puts an item back where it was and into the index. Returns the restored item.
+    @discardableResult
+    func restore(_ entry: TrashedItem) async throws -> Item {
+        guard let trashStore else { throw StoreError.unavailable }
+        let item = try await trashStore.restore(entry.id)
+        try? index.upsert(item)
+        if lastDeleted == entry { lastDeleted = nil }
+        reloadFromIndex()
+        await reloadTrash()
+        startAnalysis()
+        return item
+    }
+
+    func purge(_ entry: TrashedItem) async throws {
+        guard let trashStore else { throw StoreError.unavailable }
+        try await trashStore.purge(entry.id)
+        if lastDeleted == entry { lastDeleted = nil }
+        await reloadTrash()
+    }
+
+    func emptyTrash() async throws {
+        guard let trashStore else { throw StoreError.unavailable }
+        try await trashStore.emptyTrash()
+        lastDeleted = nil
+        await reloadTrash()
+    }
+
+    /// Deletes items that have been in the Trash longer than the chosen time, unless that is switched off.
+    /// This is the only place that deletes for good by itself. Returns how many items it removed.
+    @discardableResult
+    func purgeExpired(now: Date = Date(), defaults: UserDefaults = .standard) async -> Int {
+        guard TrashSettings.autoEmpties(defaults), let trashStore else {
+            await reloadTrash()
+            return 0
+        }
+        let cutoff = now.addingTimeInterval(-Double(TrashSettings.retentionDays(defaults)) * 86_400)
+        let removed = (try? await trashStore.purgeTrash(olderThan: cutoff)) ?? 0
+        await reloadTrash()
+        return removed
     }
 
     func createCollection(named name: String, in parent: CollectionPath) async throws -> CollectionPath {
