@@ -157,7 +157,7 @@ extension RuleAction {
         case .setField(let name, let pattern, _, let op, let operand):
             Rule.isUsable(fieldName: name) && FieldExtractor.isValid(pattern: pattern)
                 && ((op == nil && operand == nil)
-                    || (op != nil && operand != nil && pattern.lowercased().contains("{zahl}")
+                    || (op != nil && operand != nil && FieldExtractor.isNumber(pattern: pattern)
                         && !(op == .divide && operand == 0)))
         case .setComputed(let name, let formula, _):
             Rule.isUsable(fieldName: name) && !(FormulaEvaluator.references(in: formula) ?? []).isEmpty

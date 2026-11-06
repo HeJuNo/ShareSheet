@@ -60,3 +60,43 @@ import Testing
         #expect(TitleTemplate.fill("Tesla", fields: ["A": .number(1)]) == nil)
     }
 }
+
+@Suite struct FieldExtractorNumberFormatTests {
+    private func number(_ text: String, _ pattern: String) -> Double? {
+        if case .number(let value)? = FieldExtractor.value(in: text, pattern: pattern) { value } else { nil }
+    }
+
+    @Test func aGermanAndAnEnglishMaskReadTheSameNumber() {
+        #expect(number("Summe 1.234,56", "Summe {Zahl|#.###,##}") == 1234.56)
+        #expect(number("Total 1,234.56", "Total {Zahl|#,###.##}") == 1234.56)
+        #expect(number("Summe 4,77", "Summe {Zahl|#.###,##}") == 4.77)
+        #expect(number("Total 4.77", "Total {Zahl|#,###.##}") == 4.77)
+    }
+
+    @Test func aMaskDecidesWhatTheAutomaticReadingCannot() {
+        #expect(number("Summe 1.234", "Summe {Zahl}") == nil)
+        #expect(number("Summe 1.234", "Summe {Zahl|#.###,##}") == 1234)
+        #expect(number("Total 1,234", "Total {Zahl|#,###.##}") == 1234)
+        #expect(number("Total 1.5", "Total {Zahl|#,###.##}") == 1.5)
+        #expect(number("Summe 1.234.567", "Summe {Zahl|#.###}") == 1_234_567)
+    }
+
+    @Test func aValueThatDoesNotFitTheMaskIsNotGuessed() {
+        #expect(number("Summe 1.234,56", "Summe {Zahl|#,###.##}") == nil)
+        #expect(number("Total 12,34,567", "Total {Zahl|#,###.##}") == nil)
+        #expect(number("Summe 12.34", "Summe {Zahl|#.###}") == nil)
+        #expect(number("Total 1,234.5,6", "Total {Zahl|#,###.##}") == nil)
+    }
+
+    @Test func masksAreOnlyValidOnNumbersAndWithUsableSeparators() {
+        #expect(FieldExtractor.isValid(pattern: "x {Zahl|#.###,##}"))
+        #expect(FieldExtractor.isValid(pattern: "x {Zahl|#,##}"))
+        #expect(!FieldExtractor.isValid(pattern: "x {Zahl|abc}"))
+        #expect(!FieldExtractor.isValid(pattern: "x {Zahl|#.}"))
+        #expect(!FieldExtractor.isValid(pattern: "x {Datum|#.##}"))
+        #expect(!FieldExtractor.isValid(pattern: "x {Text|#.##}"))
+        #expect(FieldExtractor.isNumber(pattern: "x {zahl|#.###,##}") && FieldExtractor.isNumber(pattern: "x {Zahl}"))
+        #expect(!FieldExtractor.isNumber(pattern: "x {Text}"))
+    }
+}
+

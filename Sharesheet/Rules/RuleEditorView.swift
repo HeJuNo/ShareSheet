@@ -283,7 +283,7 @@ private struct ActionRow: View {
                 }
             }
             if case .setField(_, let pattern, _, _, _) = action {
-                Text("Use {Zahl}, {Datum} or {Text} once, e.g. Gesamtbetrag (EUR) {Zahl}.")
+                Text("Use {Zahl}, {Datum} or {Text} once, e.g. Gesamtbetrag (EUR) {Zahl}. A number format makes 1.234 clear: {Zahl|#.###,##} is German, {Zahl|#,###.##} English.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 if !pattern.isEmpty, !FieldExtractor.isValid(pattern: pattern) {
@@ -305,7 +305,7 @@ private struct ActionRow: View {
                         .onAppear {
                             if case .setField(_, _, _, _, .some(let value)) = action { operandText = "\(value)" }
                         }
-                    if case .setField(_, let pattern, _, .some, let value) = action, !pattern.lowercased().contains("{zahl}") || value == nil
+                    if case .setField(_, let pattern, _, .some, let value) = action, !FieldExtractor.isNumber(pattern: pattern) || value == nil
                         || (op.wrappedValue == .divide && value == 0)
                     {
                         Text("Calculations need a {Zahl} pattern and a number, and cannot divide by 0.")
