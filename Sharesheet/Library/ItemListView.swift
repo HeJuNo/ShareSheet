@@ -188,7 +188,7 @@ struct ItemResults: View {
 
     private func delete(_ item: IndexedItem) {
         Task {
-            do { try await model.delete(item) } catch { failure = .delete }
+            do { try await model.delete(item.id) } catch { failure = .delete }
         }
     }
 }

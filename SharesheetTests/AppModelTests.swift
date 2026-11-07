@@ -154,7 +154,7 @@ struct AppModelTests {
 
         try await model.toggleFavorite(item)
         #expect(model.counts.favorites == 0)
-        try await model.delete(item)
+        try await model.delete(item.id)
 
         #expect(model.counts.all == 0)
         #expect(try await env.store.listItems().isEmpty)
@@ -179,7 +179,7 @@ struct AppModelTests {
         let item = try #require(model.items(LibraryQuery(scope: .all)).first)
         try FileManager.default.removeItem(at: env.libraryRoot.appending(path: item.id.relativePath))
 
-        await #expect(throws: (any Error).self) { try await model.delete(item) }
+        await #expect(throws: (any Error).self) { try await model.delete(item.id) }
         await #expect(throws: (any Error).self) { try await model.toggleFavorite(item) }
     }
 

@@ -445,12 +445,19 @@ enum TrashSettings {
     }
 
     private func changeFields(_ id: ItemID, _ change: @escaping @Sendable (inout Item) -> Void) async throws -> Item {
+        try await modifyIndexed(id, failure: "Changing a field failed", change)
+    }
+
+    /// One store step on the current file of `id`; the index and the lists follow it.
+    private func modifyIndexed(
+        _ id: ItemID, failure: String, _ change: @escaping @Sendable (inout Item) throws -> Void
+    ) async throws -> Item {
         let store = try requireStore()
         let saved: Item
         do {
             saved = try await store.modify(redirects.current(id), change)
         } catch {
-            Self.log.error("Changing a field failed: \(error)")
+            Self.log.error("\(failure): \(error)")
             throw error
         }
         try? index.upsert(saved)
@@ -470,19 +477,7 @@ enum TrashSettings {
     // MARK: Editing
 
     func toggleFavorite(_ item: IndexedItem) async throws {
-        let store = try requireStore()
-        do {
-            let saved = try await store.modify(item.id) { $0.favorite.toggle() }
-            try? index.upsert(saved)
-        } catch {
-            Self.log.error("Toggling favorite failed: \(error)")
-            throw error
-        }
-        reloadFromIndex()
-    }
-
-    func delete(_ item: IndexedItem) async throws {
-        try await delete(item.id)
+        _ = try await modifyIndexed(item.id, failure: "Toggling favorite failed") { $0.favorite.toggle() }
     }
 
     func loadItem(_ id: ItemID) async throws -> Item {
@@ -492,31 +487,21 @@ enum TrashSettings {
     /// Writes the user-editable fields (title, note, tags, favorite) of `item` onto its file in one store
     /// step, so capture results written meanwhile survive. Throws `StoreError.notFound` when it is gone.
     func save(_ item: Item) async throws -> Item {
-        let store = try requireStore()
-        let saved: Item
-        do {
-            let (title, note, tags, favorite) = (item.title, item.note, item.tags, item.favorite)
-            // The date is written only when it was set by hand, so a screen holding an old date cannot undo a
-            // date a rule set meanwhile.
-            let (created, byHand, titleByHand) = (item.created, item.createdManual, item.titleManual)
-            saved = try await store.modify(redirects.current(item.id)) {
-                $0.title = title
-                if titleByHand { $0.titleManual = true }
-                $0.note = note
-                $0.tags = tags
-                $0.favorite = favorite
-                if byHand {
-                    $0.created = created
-                    $0.createdManual = true
-                }
+        let (title, note, tags, favorite) = (item.title, item.note, item.tags, item.favorite)
+        // The date is written only when it was set by hand, so a screen holding an old date cannot undo a
+        // date a rule set meanwhile.
+        let (created, byHand, titleByHand) = (item.created, item.createdManual, item.titleManual)
+        return try await modifyIndexed(item.id, failure: "Saving an item failed") {
+            $0.title = title
+            if titleByHand { $0.titleManual = true }
+            $0.note = note
+            $0.tags = tags
+            $0.favorite = favorite
+            if byHand {
+                $0.created = created
+                $0.createdManual = true
             }
-        } catch {
-            Self.log.error("Saving an item failed: \(error)")
-            throw error
         }
-        try? index.upsert(saved)
-        reloadFromIndex()
-        return saved
     }
 
     /// Returns the item's new id.
