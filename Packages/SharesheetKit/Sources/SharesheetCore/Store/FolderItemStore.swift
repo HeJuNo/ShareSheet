@@ -82,7 +82,7 @@ private final class RootPresenter: NSObject, NSFilePresenter, @unchecked Sendabl
 }
 
 private actor Worker {
-    private static let attachments = "_attachments"
+    private static let attachments = LibraryLayout.attachmentsFolder
     private let root: URL
     private let trash: any Trashing
     private let onPlaceholder: @Sendable (URL) -> Void
@@ -130,7 +130,7 @@ private actor Worker {
     func collections() throws -> [CollectionPath] {
         var result: Set<CollectionPath> = [.unsorted]
         func walk(_ path: CollectionPath) throws {
-            for name in try entries(at: path) where Self.isCollectionName(name) && isDirectory(path, name) {
+            for name in try entries(at: path) where LibraryLayout.isCollectionName(name) && isDirectory(path, name) {
                 let child = CollectionPath(components: path.components + [name])
                 result.insert(child)
                 try walk(child)
@@ -219,17 +219,14 @@ private actor Worker {
 
     func delete(_ id: ItemID) throws {
         let item = try read(id)
-        let attachments = [item.file, item.image, item.screenshot, item.screenshotDark, item.archive]
-            .compactMap { $0 }
-            .filter { $0.hasPrefix(Self.attachments + "/") }
+        let attachments = Self.attachmentPaths(of: item)
         var inUse = Set<String>()
         var scanIsComplete = true
         if !attachments.isEmpty {
             let scanned = try scan(.root)
             scanIsComplete = scanned.isComplete
             for other in scanned.items where other.id != id {
-                inUse.formUnion(
-                    [other.file, other.image, other.screenshot, other.screenshotDark, other.archive].compactMap { $0 })
+                inUse.formUnion(other.attachmentReferences)
             }
         }
         try trashFile(try fileURL(id.relativePath))
@@ -246,8 +243,7 @@ private actor Worker {
     private var trashURL: URL { root.appending(path: LibraryTrash.folderName, directoryHint: .isDirectory) }
 
     private static func attachmentPaths(of item: Item) -> [String] {
-        [item.file, item.image, item.screenshot, item.screenshotDark, item.archive]
-            .compactMap { $0 }.filter { $0.hasPrefix(attachments + "/") }
+        item.attachmentReferences.filter { $0.hasPrefix(attachments + "/") }
     }
 
     /// Trashed items by path inside the trash, with their file's modification date as the time of deletion.
@@ -368,7 +364,7 @@ private actor Worker {
     }
 
     func deleteCollection(_ path: CollectionPath, moveItemsTo destination: CollectionPath?) throws {
-        guard let first = path.components.first, Self.isCollectionName(first) else {
+        guard let first = path.components.first, LibraryLayout.isCollectionName(first) else {
             throw StoreError.notFound(path.relativePath)
         }
         guard path != .unsorted else { throw StoreError.unavailable }
@@ -415,7 +411,7 @@ private actor Worker {
                 isComplete = false
                 continue
             }
-            guard Self.isCollectionName(name) else { continue }
+            guard LibraryLayout.isCollectionName(name) else { continue }
             if isDirectory(collection, name) {
                 let nested = try scan(CollectionPath(components: collection.components + [name]))
                 items.append(contentsOf: nested.items)
@@ -438,10 +434,6 @@ private actor Worker {
         var isDir: ObjCBool = false
         guard let url = try? directoryURL(collection).appending(path: name) else { return false }
         return fm.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
-    }
-
-    private static func isCollectionName(_ name: String) -> Bool {
-        name != attachments && !name.hasPrefix(".")
     }
 
     // MARK: File helpers

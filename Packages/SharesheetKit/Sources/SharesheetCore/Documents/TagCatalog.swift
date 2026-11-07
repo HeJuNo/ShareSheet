@@ -22,6 +22,18 @@ public enum TagCatalog {
         return cleaned
     }
 
+    /// True when `tags` holds `tag`, ignoring case.
+    public static func contains(_ tags: [String], _ tag: String) -> Bool {
+        tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame }
+    }
+
+    /// True when `tags` already holds `tag`, or a spelling `resolve` treats as the same tag.
+    public static func carries(_ tags: [String], _ tag: String) -> Bool {
+        if contains(tags, tag) { return true }
+        if let resolved = resolve(tag, among: tags), tags.contains(resolved) { return true }
+        return false
+    }
+
     private static func key(_ name: String) -> String {
         var s = name.lowercased()
             .folding(options: .diacriticInsensitive, locale: nil)

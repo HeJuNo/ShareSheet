@@ -75,7 +75,7 @@ actor RuleApplier: RuleApplying {
         let existing = (try? index.allTags()) ?? []
         var tags: [String] = []
         for name in outcome.tags {
-            if let tag = TagCatalog.resolve(name, among: existing), !DocumentAnalyzer.carries(item.tags + tags, tag) {
+            if let tag = TagCatalog.resolve(name, among: existing), !TagCatalog.carries(item.tags + tags, tag) {
                 tags.append(tag)
             }
         }
@@ -150,7 +150,7 @@ actor RuleApplier: RuleApplying {
             if !plan.tags.isEmpty || plan.date != nil || !plan.fields.isEmpty || plan.title != nil {
                 let (tags, date, fields, title) = (plan.tags, plan.date, plan.fields, plan.title)
                 let saved = try await store.modify(current) { item in
-                    for tag in tags where !DocumentAnalyzer.carries(item.tags, tag) { item.tags.append(tag) }
+                    for tag in tags where !TagCatalog.carries(item.tags, tag) { item.tags.append(tag) }
                     if let date, !item.createdManual { item.created = date }
                     for (name, value) in fields where !item.fieldsManual.contains(name) && !item.fieldsDeleted.contains(name) {
                         item.fields[name] = value
@@ -219,7 +219,7 @@ actor RuleApplier: RuleApplying {
     private func collection(named name: String) async -> CollectionPath? {
         // Checked before sanitizing: it would turn "", ".." and ".hidden" into valid names.
         let raw = name.split(separator: "/", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        guard raw.allSatisfy({ !$0.isEmpty && $0 != "_attachments" && !$0.hasPrefix(".") }) else { return nil }
+        guard raw.allSatisfy({ !$0.isEmpty && LibraryLayout.isCollectionName($0) }) else { return nil }
         let path = CollectionPath(components: raw.map { FileNamer.sanitize($0) })
         let known = (try? await store.collections()) ?? []
         return known.first { $0.relativePath.caseInsensitiveCompare(path.relativePath) == .orderedSame } ?? path

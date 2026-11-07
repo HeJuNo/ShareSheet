@@ -182,7 +182,7 @@ public struct InboxImporter: Sendable {
         let (highlight, tags, note, favorite) = (entry.highlight, request.tags, request.note, request.favorite)
         return try await store.modify(item.id) { merged in
             if let highlight, !merged.highlights.contains(highlight) { merged.highlights.append(highlight) }
-            for tag in tags where !merged.tags.contains(tag) { merged.tags.append(tag) }
+            for tag in tags where !TagCatalog.contains(merged.tags, tag) { merged.tags.append(tag) }
             if merged.note.isEmpty { merged.note = note }
             merged.favorite = merged.favorite || favorite
         }.id

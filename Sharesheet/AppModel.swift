@@ -359,7 +359,7 @@ enum TrashSettings {
     /// The suggested tag to show, none when the item carries it already (e.g. added by hand since).
     nonisolated static func visibleSuggestion(_ suggestion: String?, itemTags: [String]) -> String? {
         guard let tag = suggestion,
-            !itemTags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame })
+            !TagCatalog.contains(itemTags, tag)
         else { return nil }
         return tag
     }
@@ -374,7 +374,7 @@ enum TrashSettings {
         }
         do {
             let saved = try await store.modify(id) { item in
-                if !DocumentAnalyzer.carries(item.tags, resolved) { item.tags.append(resolved) }
+                if !TagCatalog.carries(item.tags, resolved) { item.tags.append(resolved) }
             }
             try? index.upsert(saved)
         } catch {
@@ -605,7 +605,7 @@ enum TrashSettings {
 
     func createCollection(named name: String, in parent: CollectionPath) async throws -> CollectionPath {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != "_attachments", !trimmed.hasPrefix(".") else {
+        guard !trimmed.isEmpty, LibraryLayout.isCollectionName(trimmed) else {
             throw AppModelError.invalidCollectionName
         }
         let store = try requireStore()

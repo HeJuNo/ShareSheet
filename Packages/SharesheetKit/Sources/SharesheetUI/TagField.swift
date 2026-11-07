@@ -1,3 +1,4 @@
+import SharesheetCore
 import SwiftUI
 
 /// Tag chips plus an input. Comma or return commits the typed token; backspace on an empty input
@@ -109,7 +110,7 @@ public struct TagField: View {
     /// `tags` plus the trimmed token, unless it is empty or already present (case-insensitively).
     public static func adding(_ token: String, to tags: [String]) -> [String] {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !tags.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame })
+        guard !trimmed.isEmpty, !TagCatalog.contains(tags, trimmed)
         else { return tags }
         return tags + [trimmed]
     }

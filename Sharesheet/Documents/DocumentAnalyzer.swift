@@ -68,13 +68,6 @@ actor DocumentAnalyzer {
         return Dictionary(uniqueKeysWithValues: best.map { ($0.key, $0.value) })
     }
 
-    /// True when `tags` already holds `tag`, or a spelling `TagCatalog` treats as the same tag.
-    static func carries(_ tags: [String], _ tag: String) -> Bool {
-        if tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) { return true }
-        if let resolved = TagCatalog.resolve(tag, among: tags), tags.contains(resolved) { return true }
-        return false
-    }
-
     /// False when the item was skipped (file not available yet, item gone) and left without an analysis row.
     private func analyze(_ candidate: AnalysisCandidate) async -> Bool {
         let text: String
@@ -126,14 +119,14 @@ actor DocumentAnalyzer {
             switch mode {
             case .automatic:
                 if let updated = try? await store.modify(candidate.id, { item in
-                    if !Self.carries(item.tags, tag) { item.tags.append(tag) }
+                    if !TagCatalog.carries(item.tags, tag) { item.tags.append(tag) }
                 }) {
                     try? index.upsert(updated)
                 }
             case .suggest:
                 // No suggestion for a tag the item already carries.
                 let current = (try? await store.item(candidate.id))?.tags ?? []
-                if !current.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) { suggestion = tag }
+                if !TagCatalog.contains(current, tag) { suggestion = tag }
             case .off:
                 break
             }

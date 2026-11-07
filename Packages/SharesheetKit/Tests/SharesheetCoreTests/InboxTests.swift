@@ -271,6 +271,15 @@ private func importer(_ inbox: Inbox, _ store: any ItemStore) -> InboxImporter {
     #expect(all.count == 1 && all[0].note == "old" && all[0].favorite && all[0].highlights == ["h1"])
 }
 
+@Test func mergeDoesNotAddATagThatDiffersOnlyInCase() async throws {
+    let (inbox, _) = try makeInbox()
+    let (store, _) = try makeStore()
+    _ = try await store.create(.fixture(tags: ["Rechnung"]), in: .unsorted)
+    try inbox.enqueue(.fixture(entries: [.fixture(highlight: "h")], tags: ["rechnung", "neu"]), files: [:])
+    _ = await importer(inbox, store).importAll()
+    #expect(try await store.listItems().map(\.tags) == [["Rechnung", "neu"]])
+}
+
 @Test func onlyHTTPLinksArePendingCapture() async throws {
     let (inbox, _) = try makeInbox()
     let (store, _) = try makeStore()

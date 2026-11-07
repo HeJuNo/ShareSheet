@@ -1,5 +1,15 @@
 import Foundation
 
+/// Folder names the library reserves for itself.
+public enum LibraryLayout {
+    public static let attachmentsFolder = "_attachments"
+
+    /// False for the attachments folder and hidden folders, which are never collections.
+    public static func isCollectionName(_ name: String) -> Bool {
+        name != attachmentsFolder && !name.hasPrefix(".")
+    }
+}
+
 public struct CollectionPath: Hashable, Comparable, Codable, Sendable {
     public var components: [String]
 
@@ -66,6 +76,11 @@ public struct Item: Equatable, Sendable {
     /// The page in its own dark appearance, captured only for pages that have one.
     public var screenshotDark: String?
     public var archive: String?
+
+    /// Every attachment path this item refers to, library-relative.
+    public var attachmentReferences: [String] {
+        [file, image, screenshot, screenshotDark, archive].compactMap { $0 }
+    }
     public var capture: CaptureState?
     public var note: String
     /// Shared text, `.text` items only.

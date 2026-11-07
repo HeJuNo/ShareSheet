@@ -198,7 +198,7 @@ public enum RuleCompiler {
             if let title = row["setTitle"] as? String, !title.isEmpty, !titles.contains(title) { titles.append(title) }
             for tag in (row["addTags"] as? [String]) ?? [] {
                 let tag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !tag.isEmpty, !tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) { tags.append(tag) }
+                if !tag.isEmpty, !TagCatalog.contains(tags, tag) { tags.append(tag) }
             }
             if let pattern = row["setDate"] as? String, !pattern.isEmpty, !patterns.contains(pattern) { patterns.append(pattern) }
             if move == nil, let target = (row["moveTo"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
