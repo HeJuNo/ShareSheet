@@ -125,9 +125,11 @@ struct ItemResults: View {
     @Environment(AppModel.self) private var model
     let query: LibraryQuery
     @State private var failure: Failure?
+    @State private var showsStats = false
 
     var body: some View {
         let items = model.items(query)
+        let stats = model.fieldStats(query)
         List {
             ForEach(items) { item in
                 NavigationLink(value: item.id) {
@@ -156,7 +158,14 @@ struct ItemResults: View {
             }
         }
         .listStyle(.plain)
-        .safeAreaInset(edge: .bottom) { FieldStatsBar(stats: model.fieldStats(query)) }
+        .toolbar {
+            if !stats.isEmpty {
+                ToolbarItem(placement: .bottomBar) {
+                    Button { showsStats = true } label: { Label("Totals", systemImage: "sum") }
+                }
+            }
+        }
+        .sheet(isPresented: $showsStats) { FieldStatsSheet(stats: stats) }
         .overlay {
             if items.isEmpty {
                 if let text = query.text {
@@ -184,42 +193,26 @@ struct ItemResults: View {
     }
 }
 
-/// One row per number field of the listed items: its name and result, and below it which aggregate that is and
-/// over how many items. Two rows at most; "N more" opens the rest.
-struct FieldStatsBar: View {
+/// The results of the listed items' number fields: name, result, and below it the aggregate and item count.
+/// Shown on demand in a sheet that a bottom toolbar button opens.
+struct FieldStatsSheet: View {
     let stats: [FieldStat]
-    @State private var showsAll = false
-    private let visibleRows = 2
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        if !stats.isEmpty {
-            VStack(spacing: 8) {
-                ForEach(stats.prefix(visibleRows)) { FieldStatRow(stat: $0) }
-                if stats.count > visibleRows {
-                    Button {
-                        showsAll = true
-                    } label: {
-                        Text("\(stats.count - visibleRows) more")
-                            .font(.subheadline)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+        NavigationStack {
+            List(stats) { FieldStatRow(stat: $0) }
+                .overlay {
+                    if stats.isEmpty { ContentUnavailableView("No fields", systemImage: "sum") }
                 }
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 10)
-            .background(.bar)
-            .sheet(isPresented: $showsAll) {
-                NavigationStack {
-                    List(stats) { FieldStatRow(stat: $0) }
-                        .navigationTitle("Fields")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .confirmationAction) { Button("Done") { showsAll = false } }
-                        }
+                .navigationTitle("Totals")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
                 }
-                .presentationDetents([.medium, .large])
-            }
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 
