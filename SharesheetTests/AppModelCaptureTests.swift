@@ -31,7 +31,7 @@ struct AppModelCaptureTests {
         let store = env.store
         let model = AppModel(storeFactory: { store }, index: env.index, inbox: env.inbox, runner: runner)
         await model.refresh()
-        while !capturer.hasStarted { try await Task.sleep(for: .milliseconds(10)) }
+        try await waitUntil("the capture to start") { capturer.hasStarted }
 
         await model.stopCaptures()
 

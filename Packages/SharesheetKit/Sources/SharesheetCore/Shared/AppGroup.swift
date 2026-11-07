@@ -11,6 +11,9 @@ public enum AppGroup {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: identifier)
     }
 
+    /// `<container>/Tmp`: where the share extension copies a share's files before they are enqueued.
+    public static let temporaryFolderName = "Tmp"
+
     /// `<container>/Inbox`, created on demand.
     public static func inboxURL() -> URL? {
         guard let container = containerURL() else { return nil }

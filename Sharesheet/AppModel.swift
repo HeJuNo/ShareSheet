@@ -730,7 +730,7 @@ extension AppModel {
             tagMode: { AnalysisSettings.tagMode() }, rules: rules)
         return AppModel(
             storeFactory: { await library.resolve() }, index: index, inbox: inbox, runner: runner,
-            extensionTemporaryRoot: AppGroup.containerURL()?.appending(path: "Tmp", directoryHint: .isDirectory),
+            extensionTemporaryRoot: AppGroup.containerURL()?.appending(path: AppGroup.temporaryFolderName, directoryHint: .isDirectory),
             analyzer: analyzer, isForeground: isForeground,
             redirects: redirects, rulesStatus: rulesStatus, ruleApplier: rules)
     }

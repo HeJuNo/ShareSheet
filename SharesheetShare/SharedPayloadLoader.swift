@@ -13,7 +13,7 @@ struct SharedPayloadLoader {
     init() {
         let base = AppGroup.containerURL() ?? FileManager.default.temporaryDirectory
         temporaryDirectory = base
-            .appending(path: "Tmp", directoryHint: .isDirectory)
+            .appending(path: AppGroup.temporaryFolderName, directoryHint: .isDirectory)
             .appending(path: UUID().uuidString, directoryHint: .isDirectory)
     }
 
