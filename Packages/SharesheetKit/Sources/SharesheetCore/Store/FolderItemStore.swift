@@ -1,87 +1,8 @@
 import Foundation
 
 /// Items as Markdown files in a folder tree (the iCloud Drive library). All file access is
-/// coordinated, and mutations are serialised through an internal actor.
-public final class FolderItemStore: ItemStore, TrashStore {
-    private let root: URL
-    private let worker: Worker
-
-    public init(
-        root: URL, trash: any Trashing = LibraryTrash(),
-        onPlaceholder: @escaping @Sendable (URL) -> Void = { _ in }
-    ) {
-        self.root = root
-        self.worker = Worker(root: root, trash: trash, onPlaceholder: onPlaceholder, willWrite: nil)
-    }
-
-    /// Test seam: `willWrite` runs after a new item's file name is chosen and before it is written.
-    init(root: URL, trash: any Trashing, willWrite: @escaping @Sendable (URL) -> Void) {
-        self.root = root
-        self.worker = Worker(root: root, trash: trash, onPlaceholder: { _ in }, willWrite: willWrite)
-    }
-
-    public func listItems() async throws -> [Item] { try await worker.listItems() }
-    public func item(_ id: ItemID) async throws -> Item { try await worker.item(id) }
-    public func findItem(url: URL) async throws -> Item? { try await worker.findItem(url: url) }
-    public func create(
-        _ draft: ItemDraft, in collection: CollectionPath, willWrite: @Sendable (ItemID) throws -> Void
-    ) async throws -> Item {
-        try await worker.create(draft, in: collection, willWrite: willWrite)
-    }
-    public func update(_ item: Item) async throws -> Item { try await worker.update(item) }
-    public func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) async throws -> Item {
-        try await worker.modify(id, transform)
-    }
-    public func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item {
-        try await worker.move(id, to: collection)
-    }
-    public func delete(_ id: ItemID) async throws { try await worker.delete(id) }
-    public func addAttachment(from source: URL, preferredName: String) async throws -> String {
-        try await worker.addAttachment(from: source, preferredName: preferredName)
-    }
-    public func attachmentURL(_ relativePath: String) async throws -> URL {
-        try await worker.attachmentURL(relativePath)
-    }
-    public func collections() async throws -> [CollectionPath] { try await worker.collections() }
-    public func createCollection(named name: String, in parent: CollectionPath) async throws -> CollectionPath {
-        try await worker.createCollection(named: name, in: parent)
-    }
-    public func deleteCollection(_ path: CollectionPath, moveItemsTo destination: CollectionPath?) async throws {
-        try await worker.deleteCollection(path, moveItemsTo: destination)
-    }
-
-    public func trashedItems() async throws -> [TrashedItem] { try await worker.trashedItems() }
-    public func restore(_ id: String) async throws -> Item { try await worker.restore(id) }
-    public func purge(_ id: String) async throws { try await worker.purge(id) }
-    public func emptyTrash() async throws { try await worker.emptyTrash() }
-    public func purgeTrash(olderThan date: Date) async throws -> Int { try await worker.purgeTrash(olderThan: date) }
-
-    public func changes() -> AsyncStream<Void> {
-        AsyncStream { continuation in
-            let presenter = RootPresenter(root: root) { continuation.yield() }
-            NSFileCoordinator.addFilePresenter(presenter)
-            continuation.onTermination = { _ in NSFileCoordinator.removeFilePresenter(presenter) }
-        }
-    }
-}
-
-private final class RootPresenter: NSObject, NSFilePresenter, @unchecked Sendable {
-    let presentedItemURL: URL?
-    let presentedItemOperationQueue = OperationQueue()
-    private let onChange: @Sendable () -> Void
-
-    init(root: URL, onChange: @escaping @Sendable () -> Void) {
-        presentedItemURL = root
-        self.onChange = onChange
-        super.init()
-        presentedItemOperationQueue.maxConcurrentOperationCount = 1
-    }
-
-    func presentedSubitemDidChange(at url: URL) { onChange() }
-    func presentedItemDidChange() { onChange() }
-}
-
-private actor Worker {
+/// coordinated, and mutations are serialised because the store is an actor.
+public actor FolderItemStore: ItemStore, TrashStore {
     private static let attachments = LibraryLayout.attachmentsFolder
     private let root: URL
     private let trash: any Trashing
@@ -89,32 +10,48 @@ private actor Worker {
     private let willWrite: (@Sendable (URL) -> Void)?
     private let fm = FileManager.default
 
-    init(
-        root: URL, trash: any Trashing, onPlaceholder: @escaping @Sendable (URL) -> Void,
-        willWrite: (@Sendable (URL) -> Void)?
+    public init(
+        root: URL, trash: any Trashing = LibraryTrash(),
+        onPlaceholder: @escaping @Sendable (URL) -> Void = { _ in }
     ) {
         self.root = root
         self.trash = trash
         self.onPlaceholder = onPlaceholder
+        self.willWrite = nil
+    }
+
+    /// Test seam: `willWrite` runs after a new item's file name is chosen and before it is written.
+    init(root: URL, trash: any Trashing, willWrite: @escaping @Sendable (URL) -> Void) {
+        self.root = root
+        self.trash = trash
+        self.onPlaceholder = { _ in }
         self.willWrite = willWrite
+    }
+
+    public nonisolated func changes() -> AsyncStream<Void> {
+        AsyncStream { continuation in
+            let presenter = RootPresenter(root: root) { continuation.yield() }
+            NSFileCoordinator.addFilePresenter(presenter)
+            continuation.onTermination = { _ in NSFileCoordinator.removeFilePresenter(presenter) }
+        }
     }
 
     // MARK: Reading
 
-    func listItems() throws -> [Item] {
+    public func listItems() throws -> [Item] {
         try scan(.root).items
     }
 
-    func item(_ id: ItemID) throws -> Item {
+    public func item(_ id: ItemID) throws -> Item {
         try read(id)
     }
 
-    func findItem(url: URL) throws -> Item? {
+    public func findItem(url: URL) throws -> Item? {
         let target = URLCleaner.clean(url)
         return try scan(.root).items.first { $0.url.map(URLCleaner.clean) == target }
     }
 
-    func attachmentURL(_ relativePath: String) throws -> URL {
+    public func attachmentURL(_ relativePath: String) throws -> URL {
         if let url = regularFileURL(relativePath) { return url }
         // iCloud keeps an evicted file as `.<name>.icloud` next to where the file belongs.
         if let url = try? fileURL(relativePath), !url.lastPathComponent.isEmpty {
@@ -127,7 +64,7 @@ private actor Worker {
         throw StoreError.notFound(relativePath)
     }
 
-    func collections() throws -> [CollectionPath] {
+    public func collections() throws -> [CollectionPath] {
         var result: Set<CollectionPath> = [.unsorted]
         func walk(_ path: CollectionPath) throws {
             for name in try entries(at: path) where LibraryLayout.isCollectionName(name) && isDirectory(path, name) {
@@ -142,7 +79,7 @@ private actor Worker {
 
     // MARK: Writing items
 
-    func create(
+    public func create(
         _ draft: ItemDraft, in collection: CollectionPath, willWrite announce: @Sendable (ItemID) throws -> Void
     ) throws -> Item {
         try ensureDirectory(collection)
@@ -150,12 +87,12 @@ private actor Worker {
         var file: String?
         var image: String?
         if let source = draft.fileSource {
-            file = try attach(from: source, preferredName: source.lastPathComponent)
+            file = try addAttachment(from: source, preferredName: source.lastPathComponent)
         }
         if let source = draft.previewImageSource {
             let slug = FileNamer.sanitize(draft.title).lowercased().replacingOccurrences(of: " ", with: "-")
             let ext = source.pathExtension
-            image = try attach(from: source, preferredName: ext.isEmpty ? "\(slug)-preview" : "\(slug)-preview.\(ext)")
+            image = try addAttachment(from: source, preferredName: ext.isEmpty ? "\(slug)-preview" : "\(slug)-preview.\(ext)")
         }
         var item = Item(
             id: ItemID(relativePath: ""), type: draft.type, url: draft.url, file: file, title: draft.title,
@@ -175,7 +112,7 @@ private actor Worker {
         throw StoreError.unavailable
     }
 
-    func update(_ item: Item) throws -> Item {
+    public func update(_ item: Item) throws -> Item {
         guard fm.fileExists(atPath: try fileURL(item.id.relativePath).path) else {
             throw StoreError.notFound(item.id.relativePath)
         }
@@ -187,7 +124,7 @@ private actor Worker {
 
     /// Read, transform and write happen inside one coordinated write, so neither another mutation of this store
     /// nor another process (the share extension) can write the file in between.
-    func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) throws -> Item {
+    public func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) throws -> Item {
         let url = try fileURL(id.relativePath)
         guard fm.fileExists(atPath: url.path) else { throw StoreError.notFound(id.relativePath) }
         return try coordinated(writing: url, options: .forMerging) { target in
@@ -204,7 +141,7 @@ private actor Worker {
         }
     }
 
-    func move(_ id: ItemID, to collection: CollectionPath) throws -> Item {
+    public func move(_ id: ItemID, to collection: CollectionPath) throws -> Item {
         var item = try read(id)
         if id.collection == collection { return item }
         try ensureDirectory(collection)
@@ -217,7 +154,7 @@ private actor Worker {
         return item
     }
 
-    func delete(_ id: ItemID) throws {
+    public func delete(_ id: ItemID) throws {
         let item = try read(id)
         let attachments = Self.attachmentPaths(of: item)
         var inUse = Set<String>()
@@ -267,12 +204,12 @@ private actor Worker {
         return found
     }
 
-    func trashedItems() throws -> [TrashedItem] {
+    public func trashedItems() throws -> [TrashedItem] {
         try trashedEntries().sorted { $0.deletedAt > $1.deletedAt }
             .map { TrashedItem(id: $0.id, title: $0.item.title, deletedAt: $0.deletedAt) }
     }
 
-    func restore(_ id: String) throws -> Item {
+    public func restore(_ id: String) throws -> Item {
         guard let entry = try trashedEntries().first(where: { $0.id == id }) else { throw StoreError.notFound(id) }
         let relative = id as NSString
         let folder = CollectionPath(components: relative.deletingLastPathComponent.split(separator: "/").map(String.init))
@@ -294,18 +231,18 @@ private actor Worker {
         return item
     }
 
-    func purge(_ id: String) throws {
+    public func purge(_ id: String) throws {
         guard fm.fileExists(atPath: trashURL.appending(path: id).path) else { throw StoreError.notFound(id) }
         try removeFromTrash(trashURL.appending(path: id))
         try cleanTrash()
     }
 
-    func emptyTrash() throws {
+    public func emptyTrash() throws {
         guard fm.fileExists(atPath: trashURL.path) else { return }
         for name in try fm.contentsOfDirectory(atPath: trashURL.path) { try removeFromTrash(trashURL.appending(path: name)) }
     }
 
-    func purgeTrash(olderThan date: Date) throws -> Int {
+    public func purgeTrash(olderThan date: Date) throws -> Int {
         let old = try trashedEntries().filter { $0.deletedAt < date }
         for entry in old { try removeFromTrash(trashURL.appending(path: entry.id)) }
         if !old.isEmpty { try cleanTrash() }
@@ -337,11 +274,7 @@ private actor Worker {
 
     // MARK: Attachments
 
-    func addAttachment(from source: URL, preferredName: String) throws -> String {
-        try attach(from: source, preferredName: preferredName)
-    }
-
-    private func attach(from source: URL, preferredName: String) throws -> String {
+    public func addAttachment(from source: URL, preferredName: String) throws -> String {
         let folder = CollectionPath(components: [Self.attachments])
         try ensureDirectory(folder)
         let ext = (preferredName as NSString).pathExtension
@@ -354,7 +287,7 @@ private actor Worker {
 
     // MARK: Collections
 
-    func createCollection(named name: String, in parent: CollectionPath) throws -> CollectionPath {
+    public func createCollection(named name: String, in parent: CollectionPath) throws -> CollectionPath {
         try ensureDirectory(parent)
         let unique = FileNamer.uniqueName(
             base: FileNamer.sanitize(name), ext: "", existing: Set(try entries(at: parent)))
@@ -363,7 +296,7 @@ private actor Worker {
         return path
     }
 
-    func deleteCollection(_ path: CollectionPath, moveItemsTo destination: CollectionPath?) throws {
+    public func deleteCollection(_ path: CollectionPath, moveItemsTo destination: CollectionPath?) throws {
         guard let first = path.components.first, LibraryLayout.isCollectionName(first) else {
             throw StoreError.notFound(path.relativePath)
         }
@@ -545,4 +478,20 @@ private actor Worker {
     private static func wholeSeconds(_ date: Date) -> Date {
         Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down))
     }
+}
+
+private final class RootPresenter: NSObject, NSFilePresenter, @unchecked Sendable {
+    let presentedItemURL: URL?
+    let presentedItemOperationQueue = OperationQueue()
+    private let onChange: @Sendable () -> Void
+
+    init(root: URL, onChange: @escaping @Sendable () -> Void) {
+        presentedItemURL = root
+        self.onChange = onChange
+        super.init()
+        presentedItemOperationQueue.maxConcurrentOperationCount = 1
+    }
+
+    func presentedSubitemDidChange(at url: URL) { onChange() }
+    func presentedItemDidChange() { onChange() }
 }
