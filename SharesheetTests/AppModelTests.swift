@@ -145,7 +145,7 @@ struct AppModelTests {
         #expect(model.favicon(for: item) == Data([1, 2, 3]))
     }
 
-    @Test func deleteRemovesItemAndUpdatesCounts() async throws {
+    @Test func togglingTheFavoriteUpdatesTheCounts() async throws {
         let env = try ModelEnv()
         _ = try await env.store.create(ItemDraft(type: .text, title: "Old", favorite: true), in: .unsorted)
         let model = env.model()
@@ -153,11 +153,9 @@ struct AppModelTests {
         let item = try #require(model.items(LibraryQuery(scope: .all)).first)
 
         try await model.toggleFavorite(item)
-        #expect(model.counts.favorites == 0)
-        try await model.delete(item.id)
 
-        #expect(model.counts.all == 0)
-        #expect(try await env.store.listItems().isEmpty)
+        #expect(model.counts.favorites == 0)
+        #expect(model.counts.all == 1)
     }
 
     @Test func iCloudStateIsUnknownUntilTheStoreAnswers() async throws {

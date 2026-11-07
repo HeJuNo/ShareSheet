@@ -33,6 +33,8 @@ struct AppModelTrashTests {
         let item = try await env.store.create(ItemDraft(type: .text, title: "Rechnung", content: "x"), in: .unsorted)
         try env.index.upsert(item)
         try await model.delete(item.id)
+        #expect(!FileManager.default.fileExists(atPath: env.libraryRoot.appending(path: item.id.relativePath).path))
+        #expect(model.items(LibraryQuery(scope: .all)).isEmpty)
         #expect(model.trashed.map(\.title) == ["Rechnung"])
         #expect(model.lastDeleted == model.trashed.first)
         #expect(model.counts.all == 0)

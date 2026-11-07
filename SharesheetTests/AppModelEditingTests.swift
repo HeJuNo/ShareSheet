@@ -153,19 +153,6 @@ struct AppModelEditingTests {
         #expect(FileManager.default.fileExists(atPath: env.libraryRoot.appending(path: newID.relativePath).path))
     }
 
-    @Test func deleteRemovesFromIndexAndTrashesFile() async throws {
-        let env = try ModelEnv()
-        let created = try await env.store.create(ItemDraft(type: .text, title: "Old"), in: .unsorted)
-        let model = env.model()
-        await model.refresh()
-
-        try await model.delete(created.id)
-
-        #expect(!FileManager.default.fileExists(atPath: env.libraryRoot.appending(path: created.id.relativePath).path))
-        #expect(model.items(LibraryQuery(scope: .all)).isEmpty)
-        #expect(model.counts.all == 0)
-    }
-
     @Test func deleteCollectionMovingItemsToUnsorted() async throws {
         let env = try ModelEnv()
         let model = env.model()

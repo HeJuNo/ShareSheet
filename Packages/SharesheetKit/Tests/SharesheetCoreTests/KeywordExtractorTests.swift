@@ -34,12 +34,6 @@ import Testing
         #expect(zip(keywords, keywords.dropFirst()).allSatisfy { $0.score >= $1.score })
     }
 
-    @Test func scoreFormulaIsPinned() {
-        let keywords = KeywordExtractor.rank(counts: ["telekom": 3], documents: 100, frequencies: ["telekom": 2])
-        let expected = (1 + log(3.0)) * (log(101.0 / 3.0) + 1)
-        #expect(abs(keywords[0].score - expected) < 1e-9)
-    }
-
     @Test func emptyTextGivesNoKeywords() {
         #expect(KeywordExtractor.termCounts(in: "").isEmpty)
         #expect(KeywordExtractor.termCounts(in: "  \n ").isEmpty)

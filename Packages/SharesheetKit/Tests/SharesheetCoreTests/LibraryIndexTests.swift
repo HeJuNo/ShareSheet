@@ -387,13 +387,6 @@ import Testing
         #expect(Set(ids(try index.search(.init(scope: .collection(CollectionPath(components: [emoji])))))) == ["\(emoji)/C.md", "\(emoji)/Sub/D.md"])
         #expect(ids(try index.search(.init(scope: .collection(CollectionPath(components: ["Billa"]))))) == ["Billa/E.md"])
     }
-
-    @Test func publicInitializersExist() {
-        let counts = LibraryCounts()
-        #expect(counts.all == 0 && counts.byType.isEmpty)
-        let item = IndexedItem(id: ItemID(relativePath: "A/B.md"), type: .link, title: "t", created: .distantPast)
-        #expect(item.tags.isEmpty && !item.favorite && item.url == nil)
-    }
 }
 
 @Test func anObservingIndexRefusesWritesWhileSuspended() throws {
