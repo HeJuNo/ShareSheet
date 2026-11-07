@@ -66,7 +66,7 @@ struct SharedPayloadLoader {
         for text in texts {
             let range = NSRange(text.startIndex..., in: text)
             for match in detector.matches(in: text, range: range) {
-                if let url = match.url, let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) {
+                if let url = match.url, url.isWebPage {
                     return url
                 }
             }
@@ -275,7 +275,7 @@ struct SharedPayloadLoader {
     private nonisolated static func webURL(_ text: String) -> URL? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.contains(where: \.isWhitespace), let url = URL(string: trimmed),
-              let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme), url.host != nil
+              url.isWebPage, url.host != nil
         else { return nil }
         return url
     }

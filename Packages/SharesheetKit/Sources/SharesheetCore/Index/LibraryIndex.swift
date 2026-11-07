@@ -487,7 +487,7 @@ public final class LibraryIndex: Sendable {
         return try pool.read { db in
             let rows = try Row.fetchAll(
                 db, sql: "SELECT id, url FROM items WHERE domain IS ? AND url IS NOT NULL ORDER BY created",
-                arguments: [Self.domain(of: target)])
+                arguments: [target.displayDomain])
             for row in rows {
                 let candidate: String = row["url"]
                 if let candidateURL = URL(string: candidate), URLCleaner.clean(candidateURL) == target {
@@ -535,7 +535,7 @@ public final class LibraryIndex: Sendable {
                               collection, note, description, highlights, archive)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, arguments: [
-                id, item.type.rawValue, item.title, item.url?.absoluteString, domain(of: item.url), item.file,
+                id, item.type.rawValue, item.title, item.url?.absoluteString, item.url?.displayDomain, item.file,
                 item.created.timeIntervalSince1970, item.capture?.rawValue, item.favorite, !item.highlights.isEmpty,
                 item.id.collection.relativePath, item.note, item.description,
                 item.highlights.joined(separator: "\n"), item.archive,
@@ -591,9 +591,4 @@ public final class LibraryIndex: Sendable {
         for key in keys { try refreshFTS(key: key, db) }
     }
 
-    private static func domain(of url: URL?) -> String? {
-        guard var host = url?.host, !host.isEmpty else { return nil }
-        if host.hasPrefix("www.") { host.removeFirst(4) }
-        return host
-    }
 }

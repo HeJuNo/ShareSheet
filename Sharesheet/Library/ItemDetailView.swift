@@ -322,7 +322,7 @@ struct ItemDetailView: View {
 
     private func metadata(_ item: Item) -> some View {
         HStack(spacing: 4) {
-            if let domain = Self.domain(of: item.url) {
+            if let domain = item.url?.displayDomain {
                 Text(verbatim: domain)
                 Text(verbatim: "·")
             }
@@ -347,12 +347,6 @@ struct ItemDetailView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
         .lineLimit(1)
-    }
-
-    private static func domain(of url: URL?) -> String? {
-        guard var host = url?.host(), !host.isEmpty else { return nil }
-        if host.hasPrefix("www.") { host.removeFirst(4) }
-        return host
     }
 
     /// Editing the title marks it as set by hand.

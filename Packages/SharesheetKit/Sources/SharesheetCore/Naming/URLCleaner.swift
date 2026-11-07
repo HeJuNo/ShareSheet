@@ -30,4 +30,11 @@ extension URL {
         guard let scheme = scheme?.lowercased() else { return false }
         return scheme == "http" || scheme == "https"
     }
+
+    /// The host in lowercase without a leading `www.`; nil without a host.
+    public var displayDomain: String? {
+        guard var host = host()?.lowercased(), !host.isEmpty else { return nil }
+        if host.hasPrefix("www.") { host.removeFirst(4) }
+        return host
+    }
 }

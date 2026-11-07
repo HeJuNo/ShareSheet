@@ -41,7 +41,7 @@ enum ArchiveNavigation: Equatable {
         if target.isFileURL {
             return target.standardizedFileURL.path == archive.standardizedFileURL.path ? .allow : .cancel
         }
-        if isLinkActivated, let scheme = target.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+        if isLinkActivated, target.isWebPage {
             return .openExternally
         }
         return .cancel

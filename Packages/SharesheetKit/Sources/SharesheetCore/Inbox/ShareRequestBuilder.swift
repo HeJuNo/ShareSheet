@@ -46,7 +46,7 @@ public struct SheetState: Equatable, Sendable {
 public enum ShareRequestBuilder {
     public static let previewImageName = "preview.jpg"
     private static let titleLength = 80
-    private static let reservedNames: Set<String> = ["request.json", "progress.json", previewImageName]
+    private static let reservedNames: Set<String> = [Inbox.requestFileName, InboxImporter.progressFileName, previewImageName]
 
     /// Collapses the redundant attachments apps send with a link: the same URL twice (compared after
     /// cleaning) is kept once, and text sent along with links (and no files) is not an item of its own:

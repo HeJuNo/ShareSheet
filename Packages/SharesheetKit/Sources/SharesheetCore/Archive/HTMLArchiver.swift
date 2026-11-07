@@ -146,7 +146,7 @@ private final class ArchiveRun {
         var base = baseURL
         if let b = try doc.select("base[href]").first(),
            let resolved = Self.resolve(try b.attr("href"), against: baseURL),
-           ["http", "https"].contains(resolved.scheme?.lowercased() ?? "") {
+           resolved.isWebPage {
             base = resolved
         }
 
@@ -385,7 +385,7 @@ private final class ArchiveRun {
     /// An absolute http(s) URL worth fetching; nil for data:, fragments, other schemes.
     private static func fetchable(_ ref: String) -> URL? {
         let trimmed = ref.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
+        guard let url = URL(string: trimmed), url.isWebPage else { return nil }
         return url
     }
 

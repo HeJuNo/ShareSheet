@@ -57,8 +57,7 @@ public enum RuleContext {
 
     /// The evaluation input: lowercased fields of the item, its `text`, and the compiled `values` as `rv`.
     public static func json(for item: Item, text: String, values: [String]) -> Data {
-        var domain = item.url?.host()?.lowercased() ?? ""
-        if domain.hasPrefix("www.") { domain.removeFirst(4) }
+        let domain = item.url?.displayDomain ?? ""
         let context: [String: Any] = [
             "type": item.type.rawValue.lowercased(),
             "url": item.url?.absoluteString.lowercased() ?? "",
