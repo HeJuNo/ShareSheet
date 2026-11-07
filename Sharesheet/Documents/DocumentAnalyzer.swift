@@ -118,10 +118,15 @@ actor DocumentAnalyzer {
         if let tag {
             switch mode {
             case .automatic:
-                if let updated = try? await store.modify(candidate.id, { item in
-                    if !TagCatalog.carries(item.tags, tag) { item.tags.append(tag) }
-                }) {
+                do {
+                    let updated = try await store.modify(candidate.id) { item in
+                        if !TagCatalog.carries(item.tags, tag) { item.tags.append(tag) }
+                    }
                     try? index.upsert(updated)
+                } catch StoreError.notFound {
+                    // The item is gone: nothing to tag.
+                } catch {
+                    return false  // the tag was not saved: analyse again later instead of losing it
                 }
             case .suggest:
                 // No suggestion for a tag the item already carries.

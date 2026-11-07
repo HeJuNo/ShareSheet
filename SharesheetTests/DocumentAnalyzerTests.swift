@@ -31,8 +31,14 @@ private final class FlakyStore: ItemStore, @unchecked Sendable {
     let base: FolderItemStore
     private let lock = NSLock()
     private var failuresLeft = 1
+    private var modifyFailuresLeft: Int
 
-    init(_ base: FolderItemStore) { self.base = base }
+    /// `failingModifies`: how many `modify` calls throw `.unavailable` before the store behaves normally.
+    init(_ base: FolderItemStore, failingModifies: Int = 0) {
+        self.base = base
+        modifyFailuresLeft = failingModifies
+        if failingModifies > 0 { failuresLeft = 0 }
+    }
 
     func listItems() async throws -> [Item] { try await base.listItems() }
     func item(_ id: ItemID) async throws -> Item { try await base.item(id) }
@@ -42,7 +48,12 @@ private final class FlakyStore: ItemStore, @unchecked Sendable {
     }
     func update(_ item: Item) async throws -> Item { try await base.update(item) }
     func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) async throws -> Item {
-        try await base.modify(id, transform)
+        let fail = lock.withLock { () -> Bool in
+            if modifyFailuresLeft > 0 { modifyFailuresLeft -= 1; return true }
+            return false
+        }
+        if fail { throw StoreError.unavailable }
+        return try await base.modify(id, transform)
     }
     func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item { try await base.move(id, to: collection) }
     func delete(_ id: ItemID) async throws { try await base.delete(id) }
@@ -268,6 +279,17 @@ struct DocumentAnalyzerTests {
         #expect(tagger.calls == 0)
         #expect(await runner.runPending() == 1)
         #expect(try env.index.analysis(forItem: item.id) != nil)
+        #expect(try await tags(env, item) == ["Rechnung"])
+    }
+
+    @Test func aFailedTagWriteLeavesTheDocumentForAnotherRun() async throws {
+        let env = try ModelEnv()
+        let item = try await addPDF(env)
+        let runner = analyzer(
+            env, store: FlakyStore(env.store, failingModifies: 1), tagger: FakeTagger(answer: "Rechnung"), mode: .automatic)
+        #expect(await runner.runPending() == 0)
+        #expect(try env.index.analysis(forItem: item.id) == nil)
+        #expect(await runner.runPending() == 1)
         #expect(try await tags(env, item) == ["Rechnung"])
     }
 
