@@ -1,7 +1,6 @@
 import SwiftUI
 import UIKit
 
-/// Hosts the SwiftUI share sheet.
 final class ShareViewController: UIViewController {
     private var model: ShareFormModel?
 

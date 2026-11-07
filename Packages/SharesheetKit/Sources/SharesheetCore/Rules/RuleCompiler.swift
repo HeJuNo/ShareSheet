@@ -145,7 +145,6 @@ public enum RuleCompiler {
             if !fieldReferences.isEmpty { outputs["out_setField"] = "[" + fieldReferences.joined(separator: ", ") + "]" }
             if let titleReference { outputs["out_setTitle"] = titleReference }
 
-            // "all": one row with every condition; "any": one row per condition.
             let groups = rule.match == .all ? [conditionCells] : conditionCells.map { [$0] }
             for (n, cells) in groups.enumerated() {
                 var row = outputs

@@ -156,7 +156,6 @@ public enum ItemCodec {
             archive: try optional("archive"),
             capture: capture, extraFrontmatter: extra)
 
-        // Body: drop the single blank separator line after the closing fence.
         var body = Array(all[(end + 1)...])
         if body.first == "" { body.removeFirst() }
 

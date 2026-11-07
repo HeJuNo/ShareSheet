@@ -1,7 +1,6 @@
 import SharesheetCore
 import SwiftUI
 
-/// The SF Symbol for an item type.
 public struct ItemTypeIcon: View {
     private let type: ItemType
 

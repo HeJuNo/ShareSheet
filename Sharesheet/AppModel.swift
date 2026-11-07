@@ -122,7 +122,6 @@ enum TrashSettings {
         self.extensionTemporaryRoot = extensionTemporaryRoot
     }
 
-    /// The rules editor's model on this library.
     func makeRulesModel() -> RulesModel {
         RulesModel(
             root: rulesRoot, applier: ruleApplier, onSaved: { [weak self] in await self?.reloadFieldAggregates() },
@@ -273,7 +272,6 @@ enum TrashSettings {
         await analysisTask?.value
     }
 
-    /// True while an analysis run is going.
     var isAnalyzing: Bool { analysisTask != nil }
 
     /// Makes every failed capture pending again, then runs the pending captures.
