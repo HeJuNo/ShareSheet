@@ -108,22 +108,6 @@ private final class SpyStore: ItemStore, @unchecked Sendable {
 @MainActor
 @Suite(.timeLimit(.minutes(1)))
 struct DocumentAnalyzerTests {
-    private func makePDF(_ lines: [String], in dir: URL) throws -> URL {
-        let url = dir.appending(path: "doc-\(UUID().uuidString).pdf")
-        var box = CGRect(x: 0, y: 0, width: 612, height: 792)
-        let context = try #require(CGContext(url as CFURL, mediaBox: &box, nil))
-        context.beginPDFPage(nil)
-        for (row, line) in lines.enumerated() {
-            let string = NSAttributedString(
-                string: line, attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 14, nil)])
-            context.textPosition = CGPoint(x: 40, y: 740 - Double(row) * 24)
-            CTLineDraw(CTLineCreateWithAttributedString(string), context)
-        }
-        context.endPDFPage()
-        context.closePDF()
-        return url
-    }
-
     private let invoiceLines = [
         "Rechnung Nummer 4711 Tischlerei Eichenholz", "Rechnungsbetrag Hobelbank Leimzwingen Eichenholz",
         "Lieferung Eichenholz Hobelbank Zahlungsziel",
@@ -133,7 +117,7 @@ struct DocumentAnalyzerTests {
     private func addPDF(
         _ env: ModelEnv, lines: [String]? = nil, tags: [String] = [], title: String = "Doc"
     ) async throws -> Item {
-        let pdf = try makePDF(lines ?? invoiceLines, in: env.base)
+        let pdf = try makeTestPDF(in: env.base, lines: lines ?? invoiceLines)
         let item = try await env.store.create(
             ItemDraft(type: .document, title: title, tags: tags, fileSource: pdf), in: .unsorted)
         try env.index.upsert(item)

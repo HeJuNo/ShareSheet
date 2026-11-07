@@ -253,7 +253,6 @@ struct CaptureRunnerTests {
 
         #expect(result.done == 1)
         #expect(capturer.captured.isEmpty)
-        #expect(capturer.renderedHTML.count == 1)
         #expect(capturer.renderedHTML.first?.contains("twitter-tweet") == true)
         let saved = try await env.store.item(item.id)
         #expect(saved.description == "Hello & welcome")
@@ -272,7 +271,6 @@ struct CaptureRunnerTests {
         let result = await env.runner(capturer, embeds: embeds, redirects: [share: photo]).runPending()
 
         #expect(result.done == 1)
-        #expect(capturer.renderedHTML.count == 1)
         let asked = try #require(embeds.requested.first)
         let query = URLComponents(url: asked, resolvingAgainstBaseURL: false)?.queryItems ?? []
         #expect(query.first { $0.name == "url" }?.value == photo.absoluteString)

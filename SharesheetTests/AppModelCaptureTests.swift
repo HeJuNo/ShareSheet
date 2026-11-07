@@ -16,10 +16,6 @@ private final class HangingCapturer: PageCapturing, @unchecked Sendable {
     }
 }
 
-private struct NoFetch: ResourceFetching {
-    func fetch(_ url: URL) async throws -> (data: Data, mimeType: String?) { throw URLError(.badURL) }
-}
-
 @MainActor
 struct AppModelCaptureTests {
     @Test func leavingTheForegroundStopsTheCaptureAndKeepsTheItemPending() async throws {

@@ -41,10 +41,6 @@ private final class GatedCapturer: PageCapturing, @unchecked Sendable {
     }
 }
 
-private struct NoFetch: ResourceFetching {
-    func fetch(_ url: URL) async throws -> (data: Data, mimeType: String?) { throw URLError(.badURL) }
-}
-
 @MainActor
 @Suite(.timeLimit(.minutes(1)))
 struct AppModelAnalysisTests {
@@ -52,28 +48,9 @@ struct AppModelAnalysisTests {
         UserDefaults(suiteName: "AppModelAnalysisTests-\(UUID().uuidString)")!
     }
 
-    private func makePDF(
-        in dir: URL, name: String = "doc-\(UUID().uuidString).pdf",
-        lines: [String] = ["Rechnung Nummer 4711 Tischlerei Eichenholz", "Hobelbank Leimzwingen Eichenholz Hobelbank"]
-    ) throws -> URL {
-        let url = dir.appending(path: name)
-        var box = CGRect(x: 0, y: 0, width: 612, height: 792)
-        let context = try #require(CGContext(url as CFURL, mediaBox: &box, nil))
-        context.beginPDFPage(nil)
-        for (row, line) in lines.enumerated() {
-            let string = NSAttributedString(
-                string: line, attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 14, nil)])
-            context.textPosition = CGPoint(x: 40, y: 740 - Double(row) * 24)
-            CTLineDraw(CTLineCreateWithAttributedString(string), context)
-        }
-        context.endPDFPage()
-        context.closePDF()
-        return url
-    }
-
     private func addPDF(_ env: ModelEnv) async throws -> Item {
         let item = try await env.store.create(
-            ItemDraft(type: .document, title: "Doc", fileSource: try makePDF(in: env.base)), in: .unsorted)
+            ItemDraft(type: .document, title: "Doc", fileSource: try makeTestPDF(in: env.base)), in: .unsorted)
         try env.index.upsert(item)
         return item
     }
@@ -311,7 +288,7 @@ struct AppModelAnalysisTests {
         let dir = env.base.appending(path: "new", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let name = (try #require(first.file) as NSString).lastPathComponent
-        let fresh = try makePDF(in: dir, name: name, lines: ["Quartalsbericht Rentabilitaet Quartalsbericht"])
+        let fresh = try makeTestPDF(in: dir, name: name, lines: ["Quartalsbericht Rentabilitaet Quartalsbericht"])
         let second = try await env.store.create(
             ItemDraft(type: .document, title: "Doc", fileSource: fresh), in: .unsorted)
         try env.index.upsert(second)
@@ -331,7 +308,7 @@ struct AppModelAnalysisTests {
         let env = try ModelEnv()
         _ = try await env.store.create(ItemDraft(type: .text, title: "Other", tags: ["Rechnung"]), in: .unsorted)
         let created = try await env.store.create(
-            ItemDraft(type: .document, title: "Doc", tags: ["rechnung"], fileSource: try makePDF(in: env.base)), in: .unsorted)
+            ItemDraft(type: .document, title: "Doc", tags: ["rechnung"], fileSource: try makeTestPDF(in: env.base)), in: .unsorted)
         let model = model(env, defaults: makeDefaults())
         await model.refresh()
         try await model.acceptSuggestedTag("Rechnung", for: created.id)
