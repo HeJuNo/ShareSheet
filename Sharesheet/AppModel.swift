@@ -417,11 +417,7 @@ enum TrashSettings {
 
     /// Reads which aggregate each field uses from `rules.json`; the list footers follow it.
     func reloadFieldAggregates() async {
-        guard let root = await rulesRoot(), case .rules(let set) = RuleFile.load(from: root) else {
-            fieldAggregates = [:]
-            return
-        }
-        fieldAggregates = set.aggregates
+        fieldAggregates = await RulesLoading.load(root: rulesRoot(), status: rulesStatus).aggregates
     }
 
     /// Sets a field by hand: rules leave it alone from now on. Returns the saved item.
