@@ -251,7 +251,7 @@ struct AppModelAnalysisTests {
         let link = try await store.create(
             ItemDraft(type: .link, url: URL(string: "https://example.com/a")!, title: "A", capture: .pending), in: .unsorted)
         try env.index.upsert(link)
-        model.capturePendingNow()
+        model.startCaptures()
         try await waitUntil("the capture to start") { capturer.hasStarted }
         #expect(!model.isAnalyzing)
 

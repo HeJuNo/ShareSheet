@@ -254,11 +254,6 @@ enum TrashSettings {
 
     // MARK: Captures
 
-    /// Runs pending captures now; a request while a run is going makes it run once more.
-    func capturePendingNow() {
-        startCaptures()
-    }
-
     /// Cancels running captures and waits until they stopped; interrupted items stay pending for the background
     /// task. Called when the app leaves the foreground: a capture frozen at suspension would keep its attempt
     /// marker, and if the system then evicted the app the next launch would mark that item failed.
@@ -299,7 +294,8 @@ enum TrashSettings {
         startCaptures()
     }
 
-    private func startCaptures() {
+    /// Runs pending captures now; a request while a run is going makes it run once more.
+    func startCaptures() {
         guard let runner, isICloudAvailable else { return }
         if captureTask != nil {
             captureRequested = true

@@ -48,7 +48,7 @@ struct SettingsView: View {
                     }
                     .disabled(isRebuilding || !model.isICloudAvailable)
                     Button("Capture pending now (\(model.pendingCaptureCount))") {
-                        model.capturePendingNow()
+                        model.startCaptures()
                     }
                     .disabled(model.pendingCaptureCount == 0 || !model.isICloudAvailable)
                     Button("Retry failed captures (\(model.failedCaptureCount))") {

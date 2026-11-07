@@ -6,7 +6,6 @@ struct PageSnapshot: Sendable {
     var domHTML: String
     var finalURL: URL
     var iconURL: URL?
-    var truncated: Bool
     /// The page in its own dark appearance; nil when it has none.
     var pngDark: Data? = nil
 }
@@ -128,7 +127,7 @@ final class WebPageCapturer: PageCapturing {
             "(function(){ var l = document.querySelector('link[rel~=icon]'); return l ? l.href : null; })()") as? String
         return PageSnapshot(
             png: png, domHTML: dom, finalURL: webView.url ?? url,
-            iconURL: icon.flatMap { $0.isEmpty ? nil : URL(string: $0) }, truncated: fullHeight > maxHeight,
+            iconURL: icon.flatMap { $0.isEmpty ? nil : URL(string: $0) },
             pngDark: pngDark)
     }
 

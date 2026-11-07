@@ -21,7 +21,6 @@ struct WebPageCapturerTests {
         #expect(image.height >= 11_000)
         #expect(snapshot.domHTML.contains("lazy-image.png"))
         #expect(snapshot.iconURL != nil)
-        #expect(snapshot.truncated == false)
     }
 
     @Test func snapshotContainsRenderedContentTopToBottom() async throws {

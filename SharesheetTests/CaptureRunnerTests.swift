@@ -69,7 +69,7 @@ private final class FakeCapturer: PageCapturing, @unchecked Sendable {
     @MainActor func capture(html: String, baseURL: URL) async throws -> PageSnapshot {
         lock.withLock { _renderedHTML.append(html) }
         return PageSnapshot(png: tinyPNG, domHTML: "<html><body><iframe></iframe></body></html>", finalURL: baseURL,
-                            iconURL: nil, truncated: false)
+                            iconURL: nil)
     }
 
     @MainActor func capture(_ url: URL) async throws -> PageSnapshot {
@@ -85,7 +85,7 @@ private final class FakeCapturer: PageCapturing, @unchecked Sendable {
         }
         return PageSnapshot(
             png: tinyPNG, domHTML: "<html><body><p>lorem ipsum</p></body></html>", finalURL: url,
-            iconURL: URL(string: "https://example.com/icon.png"), truncated: false,
+            iconURL: URL(string: "https://example.com/icon.png"),
             pngDark: url.path().contains("dark") ? tinyPNG : nil)
     }
 }

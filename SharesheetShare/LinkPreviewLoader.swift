@@ -6,8 +6,6 @@ import UniformTypeIdentifiers
 
 struct LinkPreview: Sendable {
     var title: String?
-    /// LinkPresentation exposes no public description, so this stays nil unless that changes.
-    var description: String?
     /// A small JPEG written into the share's temp directory.
     var imageURL: URL?
 }

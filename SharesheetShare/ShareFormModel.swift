@@ -146,9 +146,6 @@ final class ShareFormModel {
                    let title = preview.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
                     self.state.title = title
                 }
-                if self.state.description == nil, let description = preview.description {
-                    self.state.description = description
-                }
                 if let imageURL = preview.imageURL {
                     self.previewImage = imageURL
                     self.thumbnail = UIImage(contentsOfFile: imageURL.path)
