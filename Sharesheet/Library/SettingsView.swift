@@ -7,10 +7,10 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isRebuilding = false
     @State private var confirmsAnalyzeAgain = false
-    @AppStorage(AnalysisSettings.enabledKey) private var analyzeDocuments = true
-    @AppStorage(AnalysisSettings.tagModeKey) private var tagMode = TagMode.suggest.rawValue
-    @AppStorage(TrashSettings.autoEmptyKey) private var trashAutoEmpty = true
-    @AppStorage(TrashSettings.daysKey) private var trashDays = 30
+    @AppStorage(AnalysisSettings.enabledKey) private var analyzeDocuments = AnalysisSettings.defaultEnabled
+    @AppStorage(AnalysisSettings.tagModeKey) private var tagMode = AnalysisSettings.defaultTagMode.rawValue
+    @AppStorage(TrashSettings.autoEmptyKey) private var trashAutoEmpty = TrashSettings.defaultAutoEmpty
+    @AppStorage(TrashSettings.daysKey) private var trashDays = TrashSettings.defaultDays
 
     var body: some View {
         NavigationStack {

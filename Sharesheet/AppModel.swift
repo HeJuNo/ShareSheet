@@ -20,15 +20,15 @@ enum AppModelError: Error, Equatable {
 enum AnalysisSettings {
     static let enabledKey = "analyzeDocuments"
     static let tagModeKey = "tagMode"
+    static let defaultEnabled = true
+    static let defaultTagMode = TagMode.suggest
 
-    /// On unless switched off.
     static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: enabledKey) as? Bool ?? true
+        defaults.object(forKey: enabledKey) as? Bool ?? defaultEnabled
     }
 
-    /// `suggest` when unset or not a known mode.
     static func tagMode(_ defaults: UserDefaults = .standard) -> TagMode {
-        defaults.string(forKey: tagModeKey).flatMap(TagMode.init(rawValue:)) ?? .suggest
+        defaults.string(forKey: tagModeKey).flatMap(TagMode.init(rawValue:)) ?? defaultTagMode
     }
 }
 
@@ -37,16 +37,17 @@ enum TrashSettings {
     static let autoEmptyKey = "trashAutoEmpty"
     static let daysKey = "trashRetentionDays"
     static let dayChoices = [7, 14, 30, 60, 90]
+    static let defaultAutoEmpty = true
+    static let defaultDays = 30
 
-    /// On unless switched off.
     static func autoEmpties(_ defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: autoEmptyKey) as? Bool ?? true
+        defaults.object(forKey: autoEmptyKey) as? Bool ?? defaultAutoEmpty
     }
 
-    /// 30 when unset or not one of the choices.
+    /// The default when unset or not one of the choices.
     static func retentionDays(_ defaults: UserDefaults = .standard) -> Int {
         let days = defaults.integer(forKey: daysKey)
-        return dayChoices.contains(days) ? days : 30
+        return dayChoices.contains(days) ? days : defaultDays
     }
 }
 
@@ -736,20 +737,22 @@ extension AppModel {
         let redirects = MoveRedirects()
         let rulesStatus = RulesStatus()
         let rules = liveRules(library: library, index: index, redirects: redirects, status: rulesStatus)
+        let store = ResolvingItemStore(library: library)
+        let isForeground: @Sendable () async -> Bool = { await UIApplication.shared.applicationState == .active }
         let runner = CaptureRunner(
-            store: ResolvingItemStore(library: library), index: index, capturer: WebPageCapturer(),
+            store: store, index: index, capturer: WebPageCapturer(),
             archiver: HTMLArchiver(fetcher: URLSessionFetcher()), favicons: FaviconFetcher(),
             embeds: URLSessionFetcher(), attemptMarker: caches.appending(path: "capture-attempt"),
-            isForeground: { await UIApplication.shared.applicationState == .active }, rules: rules)
+            isForeground: isForeground, rules: rules)
         let analyzer = DocumentAnalyzer(
-            store: ResolvingItemStore(library: library), index: index, tagger: FallbackTagger(
+            store: store, index: index, tagger: FallbackTagger(
                 primary: FoundationModelsTagger(),
                 fallback: LocalTagger(examples: { (try? index.taggedExamples(limit: LocalTagger.maxExamples)) ?? [] })),
             tagMode: { AnalysisSettings.tagMode() }, rules: rules)
         return AppModel(
             storeFactory: { await library.resolve() }, index: index, inbox: inbox, runner: runner,
             extensionTemporaryRoot: AppGroup.containerURL()?.appending(path: "Tmp", directoryHint: .isDirectory),
-            analyzer: analyzer, isForeground: { await UIApplication.shared.applicationState == .active },
+            analyzer: analyzer, isForeground: isForeground,
             redirects: redirects, rulesStatus: rulesStatus, ruleApplier: rules)
     }
 

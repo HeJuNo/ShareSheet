@@ -4,8 +4,8 @@ import SwiftUI
 /// Deleted items: restore them, delete them for good, or empty the Trash.
 struct TrashView: View {
     @Environment(AppModel.self) private var model
-    @AppStorage(TrashSettings.autoEmptyKey) private var autoEmpty = true
-    @AppStorage(TrashSettings.daysKey) private var days = 30
+    @AppStorage(TrashSettings.autoEmptyKey) private var autoEmpty = TrashSettings.defaultAutoEmpty
+    @AppStorage(TrashSettings.daysKey) private var days = TrashSettings.defaultDays
     @State private var pendingPurge: TrashedItem?
     @State private var confirmsEmpty = false
     @State private var failed = false
