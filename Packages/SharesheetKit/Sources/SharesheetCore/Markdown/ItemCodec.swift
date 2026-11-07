@@ -115,6 +115,13 @@ public enum ItemCodec {
         func optional(_ key: String) throws -> String? {
             try values[key].map { try scalar($0, key: key) }
         }
+        func flag(_ key: String) throws -> Bool {
+            switch values[key] {
+            case nil, "false": return false
+            case "true": return true
+            default: throw CodecError.invalidValue(key)
+            }
+        }
 
         guard let type = ItemType(rawValue: try required("type")) else {
             throw CodecError.invalidValue("type")
@@ -130,33 +137,15 @@ public enum ItemCodec {
             guard let state = CaptureState(rawValue: $0) else { throw CodecError.invalidValue("capture") }
             return state
         }
-        let favorite: Bool
-        switch values["favorite"] {
-        case nil, "false": favorite = false
-        case "true": favorite = true
-        default: throw CodecError.invalidValue("favorite")
-        }
-
-        let createdManual: Bool
-        switch values["created_manual"] {
-        case nil, "false": createdManual = false
-        case "true": createdManual = true
-        default: throw CodecError.invalidValue("created_manual")
-        }
-
-        let titleManual: Bool
-        switch values["title_manual"] {
-        case nil, "false": titleManual = false
-        case "true": titleManual = true
-        default: throw CodecError.invalidValue("title_manual")
-        }
+        let favorite = try flag("favorite"), createdManual = try flag("created_manual"), titleManual = try flag("title_manual")
         var fields: [String: FieldValue] = [:]
         for line in fieldLines {
             let (name, value) = try decodeField(line)
             fields[name] = value
         }
 
-        let fieldsManual = try Set(manualLines.flatMap(decodeNames)), fieldsDeleted = try Set(deletedLines.flatMap(decodeNames))
+        let fieldsManual = try Set(manualLines.flatMap { try decodeNames($0, key: "field_manual") }),
+            fieldsDeleted = try Set(deletedLines.flatMap { try decodeNames($0, key: "field_deleted") })
 
         var item = Item(
             id: id, type: type, url: url, file: try optional("file"), title: try required("title"),
@@ -222,21 +211,23 @@ public enum ItemCodec {
         case .date(let date): parts = [name, "date", isoFormatter().string(from: date)]
         case .text(let text): parts = [name, "text", text]
         }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.withoutEscapingSlashes]
-        return String(decoding: (try? encoder.encode(parts)) ?? Data("[]".utf8), as: UTF8.self)
+        return jsonArray(parts)
     }
 
     /// A field name as a JSON array with one string, like the `field` lines.
     private static func encodeName(_ name: String) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.withoutEscapingSlashes]
-        return String(decoding: (try? encoder.encode([name])) ?? Data("[]".utf8), as: UTF8.self)
+        jsonArray([name])
     }
 
-    private static func decodeNames(_ raw: String) throws -> [String] {
+    private static func jsonArray(_ strings: [String]) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        return String(decoding: (try? encoder.encode(strings)) ?? Data("[]".utf8), as: UTF8.self)
+    }
+
+    private static func decodeNames(_ raw: String, key: String) throws -> [String] {
         guard let names = try? JSONDecoder().decode([String].self, from: Data(raw.utf8)) else {
-            throw CodecError.invalidValue("field_manual")
+            throw CodecError.invalidValue(key)
         }
         return names
     }
