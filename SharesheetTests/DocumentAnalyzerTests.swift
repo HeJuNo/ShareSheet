@@ -57,9 +57,10 @@ private final class FlakyStore: ItemStore, @unchecked Sendable {
     }
     func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item { try await base.move(id, to: collection) }
     func delete(_ id: ItemID) async throws { try await base.delete(id) }
-    func addAttachment(from source: URL, preferredName: String) async throws -> String {
-        try await base.addAttachment(from: source, preferredName: preferredName)
+    func addAttachment(from source: URL, preferredName: String, in collection: CollectionPath) async throws -> String {
+        try await base.addAttachment(from: source, preferredName: preferredName, in: collection)
     }
+    func consolidateAttachments() async throws -> [AttachmentMove] { try await base.consolidateAttachments() }
     func attachmentURL(_ relativePath: String) async throws -> URL {
         let fail = lock.withLock { () -> Bool in
             if failuresLeft > 0 { failuresLeft -= 1; return true }
@@ -99,9 +100,10 @@ private final class SpyStore: ItemStore, @unchecked Sendable {
     }
     func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item { try await base.move(id, to: collection) }
     func delete(_ id: ItemID) async throws { try await base.delete(id) }
-    func addAttachment(from source: URL, preferredName: String) async throws -> String {
-        try await base.addAttachment(from: source, preferredName: preferredName)
+    func addAttachment(from source: URL, preferredName: String, in collection: CollectionPath) async throws -> String {
+        try await base.addAttachment(from: source, preferredName: preferredName, in: collection)
     }
+    func consolidateAttachments() async throws -> [AttachmentMove] { try await base.consolidateAttachments() }
     func attachmentURL(_ relativePath: String) async throws -> URL {
         lock.withLock { _attachmentCalls += 1 }
         return try await base.attachmentURL(relativePath)

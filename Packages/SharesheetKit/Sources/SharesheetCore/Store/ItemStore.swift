@@ -15,8 +15,11 @@ public protocol ItemStore: Sendable {
     func modify(_ id: ItemID, _ transform: @Sendable (inout Item) throws -> Void) async throws -> Item
     func move(_ id: ItemID, to collection: CollectionPath) async throws -> Item
     func delete(_ id: ItemID) async throws
-    /// Returns the library-relative path, e.g. `_attachments/x.png`.
-    func addAttachment(from source: URL, preferredName: String) async throws -> String
+    /// Copies the file next to the items of `collection`; returns the library-relative path, e.g. `Billa/2026/x.png`.
+    func addAttachment(from source: URL, preferredName: String, in collection: CollectionPath) async throws -> String
+    /// Brings every item's attachments into the folder of its info file (older libraries kept them in `_attachments`).
+    /// Does nothing while the library is incomplete (files still in iCloud). Returns what moved or was copied.
+    func consolidateAttachments() async throws -> [AttachmentMove]
     func attachmentURL(_ relativePath: String) async throws -> URL
     /// Sorted, nested included, reserved folders excluded, always contains `.unsorted`.
     func collections() async throws -> [CollectionPath]
@@ -25,7 +28,19 @@ public protocol ItemStore: Sendable {
     func changes() -> AsyncStream<Void>
 }
 
+/// An attachment file that now lives at `to`; `from` is the path items referred to before.
+public struct AttachmentMove: Equatable, Sendable {
+    public var from: String
+    public var to: String
+
+    public init(from: String, to: String) {
+        self.from = from
+        self.to = to
+    }
+}
+
 extension ItemStore {
+
     public func create(_ draft: ItemDraft, in collection: CollectionPath) async throws -> Item {
         try await create(draft, in: collection, willWrite: { _ in })
     }

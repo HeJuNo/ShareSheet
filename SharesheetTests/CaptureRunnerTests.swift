@@ -229,8 +229,8 @@ struct CaptureRunnerTests {
         #expect(saved.capture == .done)
         let screenshot = try #require(saved.screenshot)
         let archive = try #require(saved.archive)
-        #expect(screenshot.hasPrefix("_attachments/"))
-        #expect(archive.hasPrefix("_attachments/"))
+        #expect(screenshot.hasPrefix("Unsorted/"))  // next to the info file
+        #expect(archive.hasPrefix("Unsorted/"))
         #expect(screenshot.hasSuffix(".png"))
         #expect(archive.hasSuffix(".html"))
         #expect(FileManager.default.fileExists(atPath: try await env.store.attachmentURL(screenshot).path))

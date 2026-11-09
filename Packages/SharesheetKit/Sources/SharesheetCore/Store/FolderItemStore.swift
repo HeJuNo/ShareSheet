@@ -87,12 +87,13 @@ public actor FolderItemStore: ItemStore, TrashStore {
         var file: String?
         var image: String?
         if let source = draft.fileSource {
-            file = try addAttachment(from: source, preferredName: source.lastPathComponent)
+            file = try addAttachment(from: source, preferredName: source.lastPathComponent, in: collection)
         }
         if let source = draft.previewImageSource {
             let slug = FileNamer.sanitize(draft.title).lowercased().replacingOccurrences(of: " ", with: "-")
             let ext = source.pathExtension
-            image = try addAttachment(from: source, preferredName: ext.isEmpty ? "\(slug)-preview" : "\(slug)-preview.\(ext)")
+            image = try addAttachment(
+                from: source, preferredName: ext.isEmpty ? "\(slug)-preview" : "\(slug)-preview.\(ext)", in: collection)
         }
         var item = Item(
             id: ItemID(relativePath: ""), type: draft.type, url: draft.url, file: file, title: draft.title,
@@ -151,12 +152,12 @@ public actor FolderItemStore: ItemStore, TrashStore {
         let newID = ItemID(relativePath: (collection.components + [name]).joined(separator: "/"))
         try coordinatedMove(from: try fileURL(id.relativePath), to: try fileURL(newID.relativePath))
         item.id = newID
-        return item
+        return try gatherAttachments(of: item)
     }
 
     public func delete(_ id: ItemID) throws {
         let item = try read(id)
-        let attachments = Self.attachmentPaths(of: item)
+        let attachments = Self.ownedAttachments(of: item)
         var inUse = Set<String>()
         var scanIsComplete = true
         if !attachments.isEmpty {
@@ -179,8 +180,9 @@ public actor FolderItemStore: ItemStore, TrashStore {
 
     private var trashURL: URL { root.appending(path: LibraryTrash.folderName, directoryHint: .isDirectory) }
 
-    private static func attachmentPaths(of item: Item) -> [String] {
-        item.attachmentReferences.filter { $0.hasPrefix(attachments + "/") }
+    /// The files an item refers to, minus anything that would be read as an item itself.
+    private static func ownedAttachments(of item: Item) -> [String] {
+        item.attachmentReferences.filter { !$0.hasSuffix(".md") }
     }
 
     /// Trashed items by path inside the trash, with their file's modification date as the time of deletion.
@@ -219,10 +221,10 @@ public actor FolderItemStore: ItemStore, TrashStore {
             existing: Set(try entries(at: folder)))
         let newID = ItemID(relativePath: (folder.components + [name]).joined(separator: "/"))
         try coordinatedMove(from: trashURL.appending(path: id), to: try fileURL(newID.relativePath))
-        for path in Self.attachmentPaths(of: entry.item) {
+        for path in Self.ownedAttachments(of: entry.item) {
             let source = trashURL.appending(path: path), destination = root.appending(path: path)
             guard fm.fileExists(atPath: source.path), !fm.fileExists(atPath: destination.path) else { continue }
-            try ensureDirectory(CollectionPath(components: [Self.attachments]))
+            try ensureDirectory(Self.folder(of: path))
             try coordinatedMove(from: source, to: destination)
         }
         pruneEmptyTrashFolders()
@@ -232,9 +234,15 @@ public actor FolderItemStore: ItemStore, TrashStore {
     }
 
     public func purge(_ id: String) throws {
-        guard fm.fileExists(atPath: trashURL.appending(path: id).path) else { throw StoreError.notFound(id) }
-        try removeFromTrash(trashURL.appending(path: id))
-        try cleanTrash()
+        let url = trashURL.appending(path: id)
+        guard fm.fileExists(atPath: url.path) else { throw StoreError.notFound(id) }
+        let doomed = try trashedEntries().filter { $0.id == id }
+        if doomed.isEmpty {
+            try removeFromTrash(url)  // not readable as an item: just the file
+            pruneEmptyTrashFolders()
+        } else {
+            try removeFromTrash(entries: doomed)
+        }
     }
 
     public func emptyTrash() throws {
@@ -244,8 +252,7 @@ public actor FolderItemStore: ItemStore, TrashStore {
 
     public func purgeTrash(olderThan date: Date) throws -> Int {
         let old = try trashedEntries().filter { $0.deletedAt < date }
-        for entry in old { try removeFromTrash(trashURL.appending(path: entry.id)) }
-        if !old.isEmpty { try cleanTrash() }
+        if !old.isEmpty { try removeFromTrash(entries: old) }
         return old.count
     }
 
@@ -253,12 +260,16 @@ public actor FolderItemStore: ItemStore, TrashStore {
         try coordinated(writing: url, options: .forDeleting) { try fm.removeItem(at: $0) }
     }
 
-    /// Removes trashed attachments no trashed item refers to any more, and folders left empty.
-    private func cleanTrash() throws {
-        let used = Set(try trashedEntries().flatMap { Self.attachmentPaths(of: $0.item) })
-        let folder = trashURL.appending(path: Self.attachments)
-        for name in (try? fm.contentsOfDirectory(atPath: folder.path)) ?? [] where !used.contains("\(Self.attachments)/\(name)") {
-            try removeFromTrash(folder.appending(path: name))
+    /// Deletes the items for good, with the attachments no other trashed item refers to, and folders left empty.
+    private func removeFromTrash(entries doomed: [(id: String, item: Item, deletedAt: Date)]) throws {
+        for entry in doomed {
+            let url = trashURL.appending(path: entry.id)
+            if fm.fileExists(atPath: url.path) { try removeFromTrash(url) }
+        }
+        let used = Set(try trashedEntries().flatMap { Self.ownedAttachments(of: $0.item) })
+        for path in Set(doomed.flatMap { Self.ownedAttachments(of: $0.item) }) where !used.contains(path) {
+            let url = trashURL.appending(path: path)
+            if fm.fileExists(atPath: url.path) { try removeFromTrash(url) }
         }
         pruneEmptyTrashFolders()
     }
@@ -274,15 +285,79 @@ public actor FolderItemStore: ItemStore, TrashStore {
 
     // MARK: Attachments
 
-    public func addAttachment(from source: URL, preferredName: String) throws -> String {
-        let folder = CollectionPath(components: [Self.attachments])
-        try ensureDirectory(folder)
-        let ext = (preferredName as NSString).pathExtension
-        let stem = FileNamer.sanitize((preferredName as NSString).deletingPathExtension)
-        let name = FileNamer.uniqueName(base: stem, ext: ext, existing: Set(try entries(at: folder)))
-        let destination = try fileURL("\(Self.attachments)/\(name)")
-        try coordinatedCopy(from: source, to: destination)
-        return "\(Self.attachments)/\(name)"
+    public func addAttachment(from source: URL, preferredName: String, in collection: CollectionPath) throws -> String {
+        try ensureDirectory(collection)
+        let name = try uniqueAttachmentName(preferredName, in: collection)
+        try coordinatedCopy(from: source, to: try directoryURL(collection).appending(path: name))
+        return (collection.components + [name]).joined(separator: "/")
+    }
+
+    public func consolidateAttachments() throws -> [AttachmentMove] {
+        // Only libraries with a leftover `_attachments` folder have anything to merge; skip the scan otherwise.
+        guard !((try? entries(at: CollectionPath(components: [Self.attachments]))) ?? []).isEmpty else { return [] }
+        let scanned = try scan(.root)
+        guard scanned.isComplete else { return [] }
+        var owners = Self.ownerCounts(scanned.items)
+        var moves: [AttachmentMove] = []
+        for item in scanned.items {
+            moves += try relocateStrays(of: item, owners: &owners).moves
+        }
+        return moves
+    }
+
+    /// After a move: brings the item's attachments along. Leaves them where they are when other items may use
+    /// them and the library cannot be read completely; the next `consolidateAttachments` finishes the job.
+    private func gatherAttachments(of item: Item) throws -> Item {
+        guard !strays(of: item).isEmpty else { return item }
+        let scanned = try scan(.root)
+        guard scanned.isComplete else { return item }
+        var owners = Self.ownerCounts(scanned.items)
+        return try relocateStrays(of: item, owners: &owners).item
+    }
+
+    /// References to existing files outside the folder of the item's info file.
+    private func strays(of item: Item) -> [String] {
+        let folder = item.id.collection.relativePath
+        return Set(Self.ownedAttachments(of: item)).filter {
+            ($0 as NSString).deletingLastPathComponent != folder && regularFileURL($0) != nil
+        }.sorted()
+    }
+
+    private static func ownerCounts(_ items: [Item]) -> [String: Int] {
+        items.flatMap { Set($0.attachmentReferences) }.reduce(into: [:]) { $0[$1, default: 0] += 1 }
+    }
+
+    /// Copies the item's stray attachments next to its info file and points the item at the copies; the original
+    /// is deleted once its last owner has its own copy. A shared file is thus copied per item.
+    private func relocateStrays(of item: Item, owners: inout [String: Int]) throws -> (item: Item, moves: [AttachmentMove]) {
+        let folder = item.id.collection
+        var map: [String: String] = [:]
+        for path in strays(of: item) {
+            guard let source = regularFileURL(path) else { continue }
+            let name = try uniqueAttachmentName((path as NSString).lastPathComponent, in: folder)
+            let target = (folder.components + [name]).joined(separator: "/")
+            try coordinatedCopy(from: source, to: try fileURL(target))
+            map[path] = target
+        }
+        guard !map.isEmpty else { return (item, []) }
+        let saved = try modify(item.id) { [map] in $0.remapAttachments(map) }
+        for path in map.keys {
+            owners[path, default: 1] -= 1
+            if owners[path, default: 0] <= 0, let url = regularFileURL(path) { try removeFromTrash(url) }
+        }
+        return (saved, map.sorted { $0.key < $1.key }.map { AttachmentMove(from: $0.key, to: $0.value) })
+    }
+
+    private func uniqueAttachmentName(_ preferred: String, in folder: CollectionPath) throws -> String {
+        var ext = (preferred as NSString).pathExtension
+        // A `.md` next to the items would be read as an item.
+        if ext.lowercased() == "md" { ext = "markdown" }
+        let stem = FileNamer.sanitize((preferred as NSString).deletingPathExtension)
+        return FileNamer.uniqueName(base: stem, ext: ext, existing: Set(try entries(at: folder)))
+    }
+
+    private static func folder(of path: String) -> CollectionPath {
+        CollectionPath(components: (path as NSString).deletingLastPathComponent.split(separator: "/").map(String.init))
     }
 
     // MARK: Collections

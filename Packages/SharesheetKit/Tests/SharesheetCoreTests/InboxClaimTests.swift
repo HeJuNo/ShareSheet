@@ -24,9 +24,10 @@ private struct CrashAfterCreateStore: ItemStore {
         try await base.move(id, to: collection)
     }
     func delete(_ id: ItemID) async throws { try await base.delete(id) }
-    func addAttachment(from source: URL, preferredName: String) async throws -> String {
-        try await base.addAttachment(from: source, preferredName: preferredName)
+    func addAttachment(from source: URL, preferredName: String, in collection: CollectionPath) async throws -> String {
+        try await base.addAttachment(from: source, preferredName: preferredName, in: collection)
     }
+    func consolidateAttachments() async throws -> [AttachmentMove] { try await base.consolidateAttachments() }
     func attachmentURL(_ relativePath: String) async throws -> URL { try await base.attachmentURL(relativePath) }
     func collections() async throws -> [CollectionPath] { try await base.collections() }
     func createCollection(named name: String, in parent: CollectionPath) async throws -> CollectionPath {

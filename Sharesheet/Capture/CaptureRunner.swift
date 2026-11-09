@@ -250,7 +250,7 @@ actor CaptureRunner {
         defer { try? FileManager.default.removeItem(at: folder) }
         let file = folder.appending(path: name)
         try data.write(to: file)
-        return try await store.addAttachment(from: file, preferredName: name)
+        return try await store.addAttachment(from: file, preferredName: name, in: item.id.collection)
     }
 
     private func storeFavicon(host: String?, iconURL: URL?) async {

@@ -81,6 +81,8 @@ enum TrashSettings {
     @ObservationIgnored private var changesTask: Task<Void, Never>?
     @ObservationIgnored private var debounceTask: Task<Void, Never>?
     @ObservationIgnored private var isRefreshing = false
+    /// Merging old `_attachments` into the item folders runs once per launch (shortcut: a library still downloading waits for the next launch).
+    @ObservationIgnored private var didConsolidateAttachments = false
     @ObservationIgnored private var refreshRequested = false
     @ObservationIgnored private var refreshWaiters: [CheckedContinuation<Void, Never>] = []
     @ObservationIgnored private var captureTask: Task<Void, Never>?
@@ -167,7 +169,9 @@ enum TrashSettings {
         if let extensionTemporaryRoot { await Self.sweep(extensionTemporaryRoot) }
         let store = await resolveStore()
         if let store {
-            let report = await Self.reindex(store: store, inbox: inbox, index: index)
+            let consolidate = !didConsolidateAttachments
+            didConsolidateAttachments = true
+            let report = await Self.reindex(store: store, inbox: inbox, index: index, consolidateAttachments: consolidate)
             lastImportProblemCount = report.failed + report.unreadable
             do {
                 collections = try await store.collections()
@@ -211,11 +215,20 @@ enum TrashSettings {
         }
     }
 
-    nonisolated private static func reindex(store: any ItemStore, inbox: Inbox, index: LibraryIndex) async -> ImportReport {
+    nonisolated private static func reindex(
+        store: any ItemStore, inbox: Inbox, index: LibraryIndex, consolidateAttachments: Bool
+    ) async -> ImportReport {
         let report = await InboxImporter(inbox: inbox, store: store).importAll()
         if report.failed + report.unreadable + report.cleanupFailed > 0 {
             log.error(
                 "Inbox import: \(report.imported.count) imported, \(report.failed) failed, \(report.unreadable) unreadable, \(report.cleanupFailed) not cleaned up")
+        }
+        if consolidateAttachments {
+            do {
+                try index.carryAttachmentData(try await store.consolidateAttachments())
+            } catch {
+                log.error("Merging attachments into the item folders failed: \(error)")
+            }
         }
         do {
             try index.replaceAll(with: try await store.listItems())
@@ -502,6 +515,7 @@ enum TrashSettings {
     func move(_ id: ItemID, to collection: CollectionPath) async throws -> ItemID {
         let id = redirects.current(id)
         let store = try requireStore()
+        let before = try? await store.item(id)
         let moved: Item
         do {
             moved = try await store.move(id, to: collection)
@@ -509,6 +523,7 @@ enum TrashSettings {
             Self.log.error("Moving an item failed: \(error)")
             throw error
         }
+        if let before { try? index.carryAttachmentData(before.attachmentMoves(to: moved)) }
         try? index.remove(id)
         try? index.upsert(moved)
         reloadFromIndex()

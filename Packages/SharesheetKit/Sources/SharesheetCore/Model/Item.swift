@@ -81,6 +81,26 @@ public struct Item: Equatable, Sendable {
     public var attachmentReferences: [String] {
         [file, image, screenshot, screenshotDark, archive].compactMap { $0 }
     }
+
+    /// Replaces attachment paths (`old` -> `new`); paths not in `map` stay.
+    public mutating func remapAttachments(_ map: [String: String]) {
+        func mapped(_ path: String?) -> String? { path.map { map[$0] ?? $0 } }
+        file = mapped(file)
+        image = mapped(image)
+        screenshot = mapped(screenshot)
+        screenshotDark = mapped(screenshotDark)
+        archive = mapped(archive)
+    }
+
+    /// Where each attachment of this item went in `other` (the same item after a move).
+    public func attachmentMoves(to other: Item) -> [AttachmentMove] {
+        let pairs = [(file, other.file), (image, other.image), (screenshot, other.screenshot),
+            (screenshotDark, other.screenshotDark), (archive, other.archive)]
+        return pairs.compactMap { old, new in
+            guard let old, let new, old != new else { return nil }
+            return AttachmentMove(from: old, to: new)
+        }
+    }
     public var capture: CaptureState?
     public var note: String
     /// Shared text, `.text` items only.

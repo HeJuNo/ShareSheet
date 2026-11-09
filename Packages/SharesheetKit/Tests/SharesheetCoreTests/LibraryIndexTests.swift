@@ -97,6 +97,23 @@ import Testing
         #expect(try index.search(.init(text: "internals", scope: .all)).count == 1)
     }
 
+    @Test func carriedAttachmentDataFollowsTheNewPath() throws {
+        let index = try LibraryIndex(path: tempDB())
+        let old = Item.fixture(archive: "_attachments/c.html")
+        try index.replaceAll(with: [old])
+        try index.setArchiveText("deep router internals", forArchive: "_attachments/c.html")
+        try index.setAnalysis(source: "_attachments/c.html", text: nil, keywords: [], suggestedTag: "Blog")
+
+        try index.carryAttachmentData([AttachmentMove(from: "_attachments/c.html", to: "Unsorted/c.html")])
+        var moved = old
+        moved.archive = "Unsorted/c.html"
+        try index.replaceAll(with: [moved])
+
+        #expect(try index.analysisText(forItem: moved.id) == "deep router internals")
+        #expect(try index.analysis(forItem: moved.id)?.suggestedTag == "Blog")
+        #expect(try index.search(.init(text: "internals", scope: .all)).count == 1)
+    }
+
     @Test func upsertAndRemove() throws {
         let index = try LibraryIndex(path: tempDB())
         var item = Item.fixture(title: "Alpha", tags: ["a"])

@@ -25,6 +25,27 @@ struct AppModelEditingTests {
         #expect(try await env.store.listItems().isEmpty)
     }
 
+    @Test func oldAttachmentsAreMergedIntoTheItemFolderWhenTheAppStarts() async throws {
+        let env = try ModelEnv()
+        let legacy = env.libraryRoot.appending(path: "_attachments", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try Data("<p>deep router internals</p>".utf8).write(to: legacy.appending(path: "page.html"))
+        var item = try await env.store.create(ItemDraft(type: .link, title: "Page"), in: .unsorted)
+        item.archive = "_attachments/page.html"
+        item = try await env.store.update(item)
+        try env.index.replaceAll(with: [item])
+        try env.index.setArchiveText("deep router internals", forArchive: "_attachments/page.html")
+
+        let model = env.model()
+        await model.refresh()
+
+        let merged = try await env.store.item(item.id)
+        #expect(merged.archive == "Unsorted/page.html")
+        #expect(FileManager.default.fileExists(atPath: env.libraryRoot.appending(path: "Unsorted/page.html").path))
+        #expect(!FileManager.default.fileExists(atPath: legacy.appending(path: "page.html").path))
+        #expect(try env.index.analysisText(forItem: item.id) == "deep router internals")
+    }
+
     @Test func aHandSetDateIsSavedAndAnUntouchedOneIsNot() async throws {
         let env = try ModelEnv()
         let created = try await env.store.create(ItemDraft(type: .text, title: "Receipt"), in: .unsorted)
@@ -191,7 +212,7 @@ struct AppModelEditingTests {
         await model.refresh()
         let source = env.base.appending(path: "shot.png")
         try Data([1, 2, 3]).write(to: source)
-        let present = try await env.store.addAttachment(from: source, preferredName: "shot.png")
+        let present = try await env.store.addAttachment(from: source, preferredName: "shot.png", in: .unsorted)
 
         #expect(await model.attachmentURL("_attachments/missing.png") == nil)
         #expect(await model.attachmentURL(present) != nil)
@@ -235,9 +256,10 @@ private struct CaptureAfterReadStore: ItemStore {
         try await base.move(id, to: collection)
     }
     func delete(_ id: ItemID) async throws { try await base.delete(id) }
-    func addAttachment(from source: URL, preferredName: String) async throws -> String {
-        try await base.addAttachment(from: source, preferredName: preferredName)
+    func addAttachment(from source: URL, preferredName: String, in collection: CollectionPath) async throws -> String {
+        try await base.addAttachment(from: source, preferredName: preferredName, in: collection)
     }
+    func consolidateAttachments() async throws -> [AttachmentMove] { try await base.consolidateAttachments() }
     func attachmentURL(_ relativePath: String) async throws -> URL { try await base.attachmentURL(relativePath) }
     func collections() async throws -> [CollectionPath] { try await base.collections() }
     func createCollection(named name: String, in parent: CollectionPath) async throws -> CollectionPath {

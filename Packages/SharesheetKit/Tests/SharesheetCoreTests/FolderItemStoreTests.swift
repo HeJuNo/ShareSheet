@@ -16,8 +16,8 @@ private func mkdir(_ root: URL, _ path: String) throws {
     let pdf = try tempFile(named: "Mietvertrag.pdf", bytes: 1024)
     let item = try await store.create(.fixture(type: .document, title: "Mietvertrag", fileSource: pdf), in: .unsorted)
     #expect(item.id.relativePath == "Unsorted/Mietvertrag.md")
-    #expect(item.file == "_attachments/Mietvertrag.pdf")
-    #expect(exists(root, "_attachments/Mietvertrag.pdf"))
+    #expect(item.file == "Unsorted/Mietvertrag.pdf")
+    #expect(exists(root, "Unsorted/Mietvertrag.pdf"))
     #expect(try await store.item(item.id) == item)
 }
 
@@ -27,9 +27,9 @@ private func mkdir(_ root: URL, _ path: String) throws {
     let created = Date(timeIntervalSince1970: 1_800_000_000.75)
     let item = try await store.create(.fixture(title: "Hello World", created: created, previewImageSource: preview), in: .unsorted)
     #expect(item.created == Date(timeIntervalSince1970: 1_800_000_000))
-    #expect(item.image == "_attachments/hello-world-preview.png")
+    #expect(item.image == "Unsorted/hello-world-preview.png")
     #expect(item.capture == nil)
-    #expect(exists(root, "_attachments/hello-world-preview.png"))
+    #expect(exists(root, "Unsorted/hello-world-preview.png"))
     #expect(try await store.item(item.id) == item)
 }
 
@@ -58,16 +58,17 @@ private func mkdir(_ root: URL, _ path: String) throws {
     #expect(updated.favorite)
 }
 
-@Test func moveRelocatesMarkdownOnly() async throws {
+@Test func moveTakesTheAttachmentsAlong() async throws {
     let (store, root) = try makeStore()
     let pdf = try tempFile(named: "x.pdf", bytes: 5)
     let item = try await store.create(.fixture(type: .document, fileSource: pdf), in: .unsorted)
     let moved = try await store.move(item.id, to: CollectionPath(components: ["Billa"]))
     #expect(moved.id.relativePath == "Billa/T.md")
-    #expect(moved.file == item.file)
+    #expect(moved.file == "Billa/x.pdf")
     #expect(exists(root, "Billa/T.md"))
+    #expect(exists(root, "Billa/x.pdf"))
     #expect(!exists(root, "Unsorted/T.md"))
-    #expect(exists(root, "_attachments/x.pdf"))
+    #expect(!exists(root, "Unsorted/x.pdf"))
     #expect(try await store.item(moved.id) == moved)
 }
 
@@ -75,7 +76,7 @@ private func mkdir(_ root: URL, _ path: String) throws {
     let trash = RecordingTrash()
     let (store, root) = try makeStore(trash: trash)
     let img = try tempFile(named: "x.jpg", bytes: 5)
-    let shared = try await store.addAttachment(from: img, preferredName: "x.jpg")
+    let shared = try await store.addAttachment(from: img, preferredName: "x.jpg", in: .unsorted)
     var first = try await store.create(.fixture(title: "A"), in: .unsorted)
     var second = try await store.create(.fixture(title: "B"), in: .unsorted)
     first.image = shared
@@ -85,17 +86,17 @@ private func mkdir(_ root: URL, _ path: String) throws {
 
     try await store.delete(first.id)
     #expect(trash.trashed.map(\.lastPathComponent) == ["A.md"])
-    #expect(exists(root, "_attachments/x.jpg"))
+    #expect(exists(root, "Unsorted/x.jpg"))
 
     try await store.delete(second.id)
     #expect(trash.trashed.map(\.lastPathComponent) == ["A.md", "B.md", "x.jpg"])
-    #expect(!exists(root, "_attachments/x.jpg"))
+    #expect(!exists(root, "Unsorted/x.jpg"))
 }
 
 @Test func deleteTrashesTheDarkScreenshotToo() async throws {
     let trash = RecordingTrash()
     let (store, root) = try makeStore(trash: trash)
-    let dark = try await store.addAttachment(from: try tempFile(named: "d.png", bytes: 5), preferredName: "d.png")
+    let dark = try await store.addAttachment(from: try tempFile(named: "d.png", bytes: 5), preferredName: "d.png", in: .unsorted)
     var item = try await store.create(.fixture(title: "A"), in: .unsorted)
     item.screenshotDark = dark
     item = try await store.update(item)
@@ -103,7 +104,7 @@ private func mkdir(_ root: URL, _ path: String) throws {
     try await store.delete(item.id)
 
     #expect(trash.trashed.map(\.lastPathComponent) == ["A.md", "d.png"])
-    #expect(!exists(root, "_attachments/d.png"))
+    #expect(!exists(root, "Unsorted/d.png"))
 }
 
 @Test func collectionsAreNestedAndSkipReserved() async throws {
@@ -213,20 +214,20 @@ private func mkdir(_ root: URL, _ path: String) throws {
     let (store, root) = try makeStore(trash: trash)
     let img = try tempFile(named: "x.jpg", bytes: 5)
     var item = try await store.create(.fixture(), in: .unsorted)
-    item.image = try await store.addAttachment(from: img, preferredName: "x.jpg")
+    item.image = try await store.addAttachment(from: img, preferredName: "x.jpg", in: .unsorted)
     item = try await store.update(item)
     try Data().write(to: root.appending(path: "Unsorted/.Other.md.icloud"))
     try await store.delete(item.id)
     #expect(trash.trashed.map(\.lastPathComponent) == ["T.md"])
-    #expect(exists(root, "_attachments/x.jpg"))
+    #expect(exists(root, "Unsorted/x.jpg"))
 
     var second = try await store.create(.fixture(title: "U"), in: .unsorted)
-    second.image = "_attachments/x.jpg"
+    second.image = "Unsorted/x.jpg"
     second = try await store.update(second)
     try Data([0xFF, 0xFE]).write(to: root.appending(path: "Unsorted/garbage.md"))
     try FileManager.default.removeItem(at: root.appending(path: "Unsorted/.Other.md.icloud"))
     try await store.delete(second.id)
-    #expect(exists(root, "_attachments/x.jpg"))
+    #expect(exists(root, "Unsorted/x.jpg"))
 }
 
 @Test func createNeverReplacesAFileThatAppearsBeforeTheWrite() async throws {
@@ -258,7 +259,7 @@ private func mkdir(_ root: URL, _ path: String) throws {
     let (store, _) = try makeStore()
     let preview = try tempFile(named: "og.png", bytes: 10)
     let item = try await store.create(.fixture(title: "Hello World", previewImageSource: preview), in: .unsorted)
-    #expect(item.image == "_attachments/hello-world-preview.png")
+    #expect(item.image == "Unsorted/hello-world-preview.png")
 }
 
 @Test func pathTraversalIsRejected() async throws {
@@ -346,7 +347,7 @@ private func mkdir(_ root: URL, _ path: String) throws {
 @Test func deleteNeverTrashesTheAttachmentsFolderOrADirectory() async throws {
     let trash = RecordingTrash()
     let (store, root) = try makeStore(trash: trash)
-    let kept = try await store.addAttachment(from: try tempFile(named: "k.png", bytes: 3), preferredName: "k.png")
+    let kept = try await store.addAttachment(from: try tempFile(named: "k.png", bytes: 3), preferredName: "k.png", in: .unsorted)
     try mkdir(root, "_attachments/sub")
     var item = try await store.create(.fixture(title: "A"), in: .unsorted)
     item.image = "_attachments/"
@@ -360,7 +361,7 @@ private func mkdir(_ root: URL, _ path: String) throws {
 
 @Test func attachmentURLRejectsDirectories() async throws {
     let (store, root) = try makeStore()
-    _ = try await store.addAttachment(from: try tempFile(named: "k.png", bytes: 3), preferredName: "k.png")
+    _ = try await store.addAttachment(from: try tempFile(named: "k.png", bytes: 3), preferredName: "k.png", in: .unsorted)
     try mkdir(root, "_attachments/sub")
     for path in ["_attachments/", "_attachments", "_attachments/sub"] {
         await #expect(throws: StoreError.self) { _ = try await store.attachmentURL(path) }
@@ -378,4 +379,73 @@ private func mkdir(_ root: URL, _ path: String) throws {
         _ = try await store.attachmentURL("_attachments/receipt.pdf")
     }
     #expect(requested.withLock { $0 }.map(\.lastPathComponent) == [".receipt.pdf.icloud"])
+}
+
+
+@Test func moveCopiesAnAttachmentAnotherItemStillUses() async throws {
+    let (store, root) = try makeStore()
+    let pdf = try tempFile(named: "x.pdf", bytes: 5)
+    let first = try await store.create(.fixture(title: "A", fileSource: pdf), in: .unsorted)
+    var second = try await store.create(.fixture(title: "B"), in: .unsorted)
+    second.file = first.file
+    second = try await store.update(second)
+
+    let moved = try await store.move(first.id, to: CollectionPath(components: ["Billa"]))
+
+    #expect(moved.file == "Billa/x.pdf")
+    #expect(exists(root, "Billa/x.pdf"))
+    #expect(exists(root, "Unsorted/x.pdf"))
+    #expect(try await store.item(second.id).file == "Unsorted/x.pdf")
+}
+
+@Test func markdownAttachmentIsNotReadAsAnItem() async throws {
+    let (store, root) = try makeStore()
+    let notes = try tempFile(named: "notes.md", bytes: 5)
+    let item = try await store.create(.fixture(type: .document, title: "Doc", fileSource: notes), in: .unsorted)
+    #expect(item.file == "Unsorted/notes.markdown")
+    #expect(exists(root, "Unsorted/notes.markdown"))
+    #expect(try await store.listItems().map(\.id.relativePath) == ["Unsorted/Doc.md"])
+}
+
+@Test func consolidateBringsLegacyAttachmentsNextToTheirItems() async throws {
+    let (store, root) = try makeStore()
+    try mkdir(root, "_attachments")
+    try mkdir(root, "Billa/2026")
+    try Data("pdf".utf8).write(to: root.appending(path: "_attachments/rechnung.pdf"))
+    try Data("png".utf8).write(to: root.appending(path: "_attachments/shot.png"))
+    try Data("shared".utf8).write(to: root.appending(path: "_attachments/shared.png"))
+    var a = try await store.create(.fixture(title: "A"), in: CollectionPath(components: ["Billa", "2026"]))
+    a.file = "_attachments/rechnung.pdf"
+    a.image = "_attachments/shared.png"
+    a = try await store.update(a)
+    var b = try await store.create(.fixture(title: "B"), in: .unsorted)
+    b.screenshot = "_attachments/shot.png"
+    b.image = "_attachments/shared.png"
+    b = try await store.update(b)
+
+    let moves = try await store.consolidateAttachments()
+
+    let newA = try await store.item(a.id), newB = try await store.item(b.id)
+    #expect(newA.file == "Billa/2026/rechnung.pdf")
+    #expect(newA.image == "Billa/2026/shared.png")
+    #expect(newB.screenshot == "Unsorted/shot.png")
+    #expect(newB.image == "Unsorted/shared.png")
+    for path in [newA.file!, newA.image!, newB.screenshot!, newB.image!] { #expect(exists(root, path)) }
+    #expect(Set(moves.map(\.from)) == ["_attachments/rechnung.pdf", "_attachments/shared.png", "_attachments/shot.png"])
+    #expect(try FileManager.default.contentsOfDirectory(atPath: root.appending(path: "_attachments").path).isEmpty)
+    #expect(try await store.consolidateAttachments().isEmpty)
+}
+
+@Test func consolidateWaitsWhileTheLibraryIsIncomplete() async throws {
+    let (store, root) = try makeStore()
+    try mkdir(root, "_attachments")
+    try Data("pdf".utf8).write(to: root.appending(path: "_attachments/x.pdf"))
+    var item = try await store.create(.fixture(title: "A"), in: .unsorted)
+    item.file = "_attachments/x.pdf"
+    item = try await store.update(item)
+    try Data().write(to: root.appending(path: "Unsorted/.Other.md.icloud"))
+
+    #expect(try await store.consolidateAttachments().isEmpty)
+    #expect(try await store.item(item.id).file == "_attachments/x.pdf")
+    #expect(exists(root, "_attachments/x.pdf"))
 }

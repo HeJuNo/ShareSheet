@@ -221,6 +221,24 @@ public final class LibraryIndex: Sendable {
         }
     }
 
+    /// Gives the files an item now refers to the analysis and archive text of the paths they were moved or copied from.
+    /// Call before indexing the item at its new paths.
+    public func carryAttachmentData(_ moves: [AttachmentMove]) throws {
+        guard !moves.isEmpty else { return }
+        try pool.write { db in
+            for move in moves {
+                try db.execute(
+                    sql: "INSERT OR IGNORE INTO archive_text(archive, text) SELECT ?, text FROM archive_text WHERE archive = ?",
+                    arguments: [move.to, move.from])
+                try db.execute(
+                    sql: """
+                        INSERT OR IGNORE INTO analysis(source, doc_text, keywords_json, suggested_tag)
+                        SELECT ?, doc_text, keywords_json, suggested_tag FROM analysis WHERE source = ?
+                        """, arguments: [move.to, move.from])
+            }
+        }
+    }
+
     public func remove(_ id: ItemID) throws {
         try pool.write { db in try Self.delete(id, db) }
     }

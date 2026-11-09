@@ -160,7 +160,9 @@ actor RuleApplier: RuleApplying {
                 try? index.upsert(saved)
             }
             if let path = plan.moveTo {
+                let before = try? await store.item(current)
                 let moved = try await store.move(current, to: path)
+                if let before { try? index.carryAttachmentData(before.attachmentMoves(to: moved)) }
                 try? index.remove(current)
                 try? index.upsert(moved)
                 redirects?.record(from: current, to: moved.id)

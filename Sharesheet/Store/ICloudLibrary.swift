@@ -62,10 +62,11 @@ struct ResolvingItemStore: ItemStore {
         try await store().move(id, to: collection)
     }
     func delete(_ id: ItemID) async throws { try await store().delete(id) }
-    func addAttachment(from source: URL, preferredName: String) async throws -> String {
-        try await store().addAttachment(from: source, preferredName: preferredName)
+    func addAttachment(from source: URL, preferredName: String, in collection: CollectionPath) async throws -> String {
+        try await store().addAttachment(from: source, preferredName: preferredName, in: collection)
     }
     func attachmentURL(_ relativePath: String) async throws -> URL { try await store().attachmentURL(relativePath) }
+    func consolidateAttachments() async throws -> [AttachmentMove] { try await store().consolidateAttachments() }
     func collections() async throws -> [CollectionPath] { try await store().collections() }
     func createCollection(named name: String, in parent: CollectionPath) async throws -> CollectionPath {
         try await store().createCollection(named: name, in: parent)
