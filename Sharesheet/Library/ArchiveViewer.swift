@@ -21,6 +21,7 @@ struct ArchiveViewer: View {
                 ProgressView()
             }
         }
+        .allowsLandscape()
         .navigationTitle("Archive")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: relativePath) {

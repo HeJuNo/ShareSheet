@@ -118,6 +118,7 @@ struct ItemDetailView: View {
             Task { await move(to: destination) }
         }
         .quickLookPreview($previewURL)
+        .onChange(of: previewURL) { _, url in if url == nil { OrientationGate.settle() } }
         .sheet(isPresented: $editingField.isPresent()) {
             if let name = editingField, let value = item?.fields[name] {
                 FieldEditSheet(name: name, value: value) { new in Task { await setField(name, new) } }

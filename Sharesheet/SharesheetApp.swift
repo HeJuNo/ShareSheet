@@ -4,6 +4,7 @@ import UIKit
 
 @main
 struct SharesheetApp: App {
+    @UIApplicationDelegateAdaptor(OrientationDelegate.self) private var orientationDelegate
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = AppModel.shared
     /// Set when the app went to the background, so returning to it refreshes once (launch refreshes via `.task`).

@@ -15,6 +15,7 @@ struct ScreenshotViewer: View {
         NavigationStack {
             content
                 .navigationBarTitleDisplayMode(.inline)
+                .allowsLandscape()
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {

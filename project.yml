@@ -68,7 +68,7 @@ targets:
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
-        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         NSUbiquitousContainers:
           # Plist keys are not expanded like values; the preprocessor fills this one in (see INFOPLIST_PREPROCESS).
           SHARESHEET_ICLOUD_CONTAINER_KEY:
