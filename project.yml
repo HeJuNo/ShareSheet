@@ -221,6 +221,18 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Sharesheet.app/Sharesheet
         BUNDLE_LOADER: $(TEST_HOST)
+  SharesheetUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: SharesheetUITests
+    dependencies:
+      - target: Sharesheet
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(SHARESHEET_APP_ID).UITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Sharesheet
 schemes:
   Sharesheet:
     build:
@@ -229,6 +241,8 @@ schemes:
         SharesheetShare: all
         SharesheetSharePDF: all
         SharesheetTests: [test]
+        SharesheetUITests: [test]
     test:
       targets:
         - SharesheetTests
+        - SharesheetUITests

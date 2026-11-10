@@ -159,8 +159,10 @@ struct ItemResults: View {
         }
         .listStyle(.plain)
         .toolbar {
+            // Not in the bottom bar: on iPhone the search field lives there, and a button appearing with the first
+            // letter made the field disappear.
             if !stats.isEmpty {
-                ToolbarItem(placement: .bottomBar) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { showsStats = true } label: { Label("Totals", systemImage: "sum") }
                 }
             }
@@ -194,7 +196,7 @@ struct ItemResults: View {
 }
 
 /// The results of the listed items' number fields: name, result, and below it the aggregate and item count.
-/// Shown on demand in a sheet that a bottom toolbar button opens.
+/// Shown on demand in a sheet that a toolbar button opens.
 struct FieldStatsSheet: View {
     let stats: [FieldStat]
     @Environment(\.dismiss) private var dismiss
