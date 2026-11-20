@@ -45,6 +45,8 @@ targets:
         product: SharesheetCore
       - package: SharesheetKit
         product: SharesheetUI
+      - package: SharesheetKit
+        product: InstagramMedia
       - package: ZenUniffi
         product: ZenUniffi
       - target: SharesheetShare
@@ -213,6 +215,8 @@ targets:
         buildPhase: resources
     dependencies:
       - target: Sharesheet
+      - package: SharesheetKit
+        product: InstagramMedia
       - package: ZenUniffi
         product: ZenUniffi
     settings:

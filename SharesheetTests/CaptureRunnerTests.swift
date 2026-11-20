@@ -1,4 +1,5 @@
 import Foundation
+import InstagramMedia
 import Testing
 import UIKit
 @testable import Sharesheet
@@ -136,13 +137,14 @@ private struct Env {
 
     func runner(
         _ capturer: FakeCapturer, isForeground: Bool = true, embeds: (any ResourceFetching)? = nil,
-        redirects: [URL: URL] = [:], rules: (any RuleApplying)? = nil
+        redirects: [URL: URL] = [:], rules: (any RuleApplying)? = nil,
+        instagram: (@Sendable (URL) async -> InstagramMediaLoader.Download?)? = nil
     ) -> CaptureRunner {
         CaptureRunner(
             store: store, index: index, capturer: capturer,
             archiver: HTMLArchiver(fetcher: StubFetcher()), favicons: FaviconFetcher(fetcher: StubFetcher()),
             embeds: embeds, resolveRedirects: { redirects[$0] }, attemptMarker: marker, isForeground: { isForeground },
-            rules: rules)
+            rules: rules, instagramMedia: instagram)
     }
 
     func makeItem(
@@ -156,6 +158,31 @@ private struct Env {
         if indexed { try index.upsert(item) }
         return item
     }
+}
+
+private func makeTemporaryMediaFolder() throws -> URL {
+    let folder = FileManager.default.temporaryDirectory.appending(path: "ig-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    try Data("image".utf8).write(to: folder.appending(path: "1.jpg"))
+    return folder
+}
+
+private final class LockedState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: CaptureState?
+
+    var value: CaptureState? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}
+
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func increment() { lock.withLock { count += 1 } }
+    var value: Int { lock.withLock { count } }
 }
 
 struct CaptureRunnerTests {
@@ -557,5 +584,90 @@ struct CaptureRunnerTests {
         #expect(try await env.store.item(ftp.id).capture == nil)
         #expect(try await env.store.item(mail.id).capture == nil)
         #expect(try env.index.search(LibraryQuery(scope: .all)).first { $0.id == ftp.id }?.capture == nil)
+    }
+
+    // MARK: Instagram media
+
+    private let instagramEmbed = #"{"html":"<blockquote class=\"instagram-media\"></blockquote>"}"#
+
+    @Test func instagramMediaIsStoredWithTheItem() async throws {
+        let env = try Env()
+        let url = URL(string: "https://www.instagram.com/reel/DfNDnB4oZut/")!
+        let item = try await env.makeItem("reel", capture: .pending, url: url)
+        let folder = FileManager.default.temporaryDirectory.appending(path: "ig-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let image = folder.appending(path: "1.jpg"), video = folder.appending(path: "2.mp4")
+        try Data("image".utf8).write(to: image)
+        try Data("video".utf8).write(to: video)
+
+        let result = await env.runner(FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), instagram: { _ in
+            .init(files: [image, video], caption: "Reel caption")
+        }).runPending()
+
+        #expect(result.done == 1)
+        let saved = try await env.store.item(item.id)
+        #expect(saved.media.count == 2)
+        #expect(saved.media[0].hasPrefix("Unsorted/") && saved.media[0].hasSuffix(".jpg"))
+        #expect(saved.media[1].hasSuffix(".mp4"))
+        #expect(saved.description == "Reel caption")
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
+    }
+
+    @Test func aUserDescriptionIsNotReplacedByTheCaption() async throws {
+        let env = try Env()
+        let url = URL(string: "https://www.instagram.com/p/C1a2b3c/")!
+        let item = try await env.store.create(
+            ItemDraft(type: .link, url: url, title: "post", description: "Mine", created: Date(), capture: .pending),
+            in: .unsorted)
+        try env.index.upsert(item)
+        let folder = try makeTemporaryMediaFolder()
+
+        _ = await env.runner(FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), instagram: { _ in
+            .init(files: [folder.appending(path: "1.jpg")], caption: "Caption")
+        }).runPending()
+
+        #expect(try await env.store.item(item.id).description == "Mine")
+    }
+
+    @Test func theItemIsDoneBeforeMediaStarts() async throws {
+        let env = try Env()
+        let item = try await env.makeItem(
+            "reel", capture: .pending, url: URL(string: "https://www.instagram.com/p/C1a2b3c/")!)
+        let seen = LockedState()
+        let store = env.store
+
+        _ = await env.runner(FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), instagram: { _ in
+            seen.value = try? await store.item(item.id).capture
+            return nil
+        }).runPending()
+
+        #expect(seen.value == .done)
+    }
+
+    @Test func aFailedMediaDownloadLeavesTheCaptureDone() async throws {
+        let env = try Env()
+        let item = try await env.makeItem(
+            "reel", capture: .pending, url: URL(string: "https://www.instagram.com/p/C1a2b3c/")!)
+
+        let result = await env.runner(
+            FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), instagram: { _ in nil }).runPending()
+
+        #expect(result.done == 1)
+        let saved = try await env.store.item(item.id)
+        #expect(saved.capture == .done)
+        #expect(saved.media.isEmpty)
+    }
+
+    @Test func mediaIsOnlyRequestedForInstagramPosts() async throws {
+        let env = try Env()
+        _ = try await env.makeItem("plain", capture: .pending)
+        let asked = LockedCounter()
+
+        _ = await env.runner(FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), instagram: { _ in
+            asked.increment()
+            return nil
+        }).runPending()
+
+        #expect(asked.value == 0)
     }
 }

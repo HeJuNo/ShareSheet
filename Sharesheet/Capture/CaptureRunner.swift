@@ -1,4 +1,5 @@
 import Foundation
+import InstagramMedia
 import SharesheetCore
 
 /// Captures screenshot and archive for saved web links, one item at a time.
@@ -15,6 +16,7 @@ actor CaptureRunner {
     private let attemptMarker: URL?
     private let isForeground: @Sendable () async -> Bool
     private let rules: (any RuleApplying)?
+    private let instagramMedia: (@Sendable (URL) async -> InstagramMediaLoader.Download?)?
     private var tail: Task<Void, Never>?
     private var checkedAttemptMarker = false
 
@@ -26,7 +28,8 @@ actor CaptureRunner {
         favicons: FaviconFetcher, embeds: (any ResourceFetching)? = nil,
         resolveRedirects: @escaping @Sendable (URL) async -> URL? = CaptureRunner.followRedirects,
         attemptMarker: URL? = nil, isForeground: @escaping @Sendable () async -> Bool = { true },
-        rules: (any RuleApplying)? = nil
+        rules: (any RuleApplying)? = nil,
+        instagramMedia: (@Sendable (URL) async -> InstagramMediaLoader.Download?)? = nil
     ) {
         self.embeds = embeds
         self.resolveRedirects = resolveRedirects
@@ -38,6 +41,7 @@ actor CaptureRunner {
         self.attemptMarker = attemptMarker
         self.isForeground = isForeground
         self.rules = rules
+        self.instagramMedia = instagramMedia
     }
 
     /// Captures items with `capture == .pending`, oldest first. Stops early when cancelled.
@@ -212,6 +216,10 @@ actor CaptureRunner {
         try? index.upsert(saved)
         if let archive, let archiveText { try? index.setArchiveText(archiveText, forArchive: archive) }
         if succeeded { await storeFavicon(host: url.host(), iconURL: iconURL) }
+        // The item is already `.done`; a failed or interrupted download leaves it without media.
+        if succeeded, let instagramMedia, SocialEmbed.platform(of: url) == .instagram {
+            await addInstagramMedia(for: item.id, postURL: url, instagramMedia: instagramMedia)
+        }
         return succeeded ? .done : transient ? .deferred : .failed
     }
 
@@ -251,6 +259,37 @@ actor CaptureRunner {
         let file = folder.appending(path: name)
         try data.write(to: file)
         return try await store.addAttachment(from: file, preferredName: name, in: item.id.collection)
+    }
+
+    /// Best effort after the item is `.done`: copy the media next to it, then one second write.
+    private func addInstagramMedia(
+        for id: ItemID, postURL: URL,
+        instagramMedia: @Sendable (URL) async -> InstagramMediaLoader.Download?
+    ) async {
+        guard let download = await instagramMedia(postURL) else { return }
+        defer {
+            if let first = download.files.first {
+                try? FileManager.default.removeItem(at: first.deletingLastPathComponent())
+            }
+        }
+        guard let current = try? await store.item(id) else { return }
+        var paths: [String] = []
+        for file in download.files {
+            let ext = file.pathExtension.isEmpty ? "bin" : file.pathExtension
+            let name = FileNamer.attachmentName(base: current.title, date: current.created, ext: ext, existing: [])
+            if let path = try? await store.addAttachment(
+                from: file, preferredName: name, in: current.id.collection) {
+                paths.append(path)
+            }
+        }
+        guard !paths.isEmpty else { return }
+        let media = paths
+        let caption = download.caption
+        guard let saved = try? await store.modify(id, {
+            $0.media = media
+            if let caption, ($0.description ?? "").isEmpty { $0.description = caption }
+        }) else { return }
+        try? index.upsert(saved)
     }
 
     private func storeFavicon(host: String?, iconURL: URL?) async {

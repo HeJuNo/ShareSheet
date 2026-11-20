@@ -1,4 +1,5 @@
 import Foundation
+import InstagramMedia
 import Observation
 import OSLog
 import SharesheetCore
@@ -733,11 +734,14 @@ extension AppModel {
         let rules = liveRules(library: library, index: index, redirects: redirects, status: rulesStatus)
         let store = ResolvingItemStore(library: library)
         let isForeground: @Sendable () async -> Bool = { await UIApplication.shared.applicationState == .active }
+        let fetcher = URLSessionFetcher()
+        let instagramMedia = InstagramMediaLoader(fetcher: fetcher)
         let runner = CaptureRunner(
             store: store, index: index, capturer: WebPageCapturer(),
-            archiver: HTMLArchiver(fetcher: URLSessionFetcher()), favicons: FaviconFetcher(),
-            embeds: URLSessionFetcher(), attemptMarker: caches.appending(path: "capture-attempt"),
-            isForeground: isForeground, rules: rules)
+            archiver: HTMLArchiver(fetcher: fetcher), favicons: FaviconFetcher(),
+            embeds: fetcher, attemptMarker: caches.appending(path: "capture-attempt"),
+            isForeground: isForeground, rules: rules,
+            instagramMedia: { await instagramMedia.download(for: $0) })
         let analyzer = DocumentAnalyzer(
             store: store, index: index, tagger: FallbackTagger(
                 primary: FoundationModelsTagger(),
