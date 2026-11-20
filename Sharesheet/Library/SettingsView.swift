@@ -1,4 +1,5 @@
 import FoundationModels
+import InstagramMedia
 import SwiftUI
 
 /// iCloud status, index and capture maintenance, and the app version.
@@ -7,6 +8,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isRebuilding = false
     @State private var confirmsAnalyzeAgain = false
+    @State private var instagramSignedIn = InstagramSessionStore.shared.load()?.isUsable ?? false
+    @State private var showsInstagramLogin = false
     @AppStorage(AnalysisSettings.enabledKey) private var analyzeDocuments = AnalysisSettings.defaultEnabled
     @AppStorage(AnalysisSettings.tagModeKey) private var tagMode = AnalysisSettings.defaultTagMode.rawValue
     @AppStorage(TrashSettings.autoEmptyKey) private var trashAutoEmpty = TrashSettings.defaultAutoEmpty
@@ -29,6 +32,22 @@ struct SettingsView: View {
                         Label("Shares not imported: \(model.lastImportProblemCount)", systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.orange)
                     }
+                }
+                Section {
+                    if instagramSignedIn {
+                        LabeledContent("Instagram", value: "Connected")
+                        Button("Sign out", role: .destructive) {
+                            InstagramSessionStore.shared.clear()
+                            instagramSignedIn = false
+                            Task { await InstagramLoginModel.clearWebCookies() }
+                        }
+                    } else {
+                        Button("Connect Instagram") { showsInstagramLogin = true }
+                    }
+                } header: {
+                    Text("Instagram")
+                } footer: {
+                    Text("Private posts need a signed-in session. The cookies stay in the keychain; Instagram’s terms apply.")
                 }
                 Section {
                     Button {
@@ -114,6 +133,9 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showsInstagramLogin) {
+                InstagramLoginView { instagramSignedIn = true }
+            }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
