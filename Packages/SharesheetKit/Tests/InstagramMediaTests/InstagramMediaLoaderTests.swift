@@ -13,6 +13,9 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var replies: [String: Reply] = [:]
+    nonisolated(unsafe) private static var _requests: [URLRequest] = []
+
+    static var requests: [URLRequest] { lock.withLock { _requests } }
 
     static func serve(_ url: String, _ reply: Reply) {
         lock.withLock { replies[url] = reply }
@@ -22,6 +25,7 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        Self.lock.withLock { Self._requests.append(request) }
         guard let url = request.url, let reply = Self.lock.withLock({ Self.replies[url.absoluteString] }) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
@@ -70,12 +74,25 @@ private final class ReportSink: @unchecked Sendable {
 
 private func loader(
     _ html: String, limits: InstagramMediaLoader.Limits = .init(),
-    diagnostics: InstagramMediaLoader.Diagnostics? = nil
+    diagnostics: InstagramMediaLoader.Diagnostics? = nil,
+    session: InstagramSession? = nil
 ) -> InstagramMediaLoader {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [StubProtocol.self]
     return InstagramMediaLoader(
-        fetcher: StubEmbed(html: html), limits: limits, configuration: configuration, diagnostics: diagnostics)
+        fetcher: StubEmbed(html: html), limits: limits, configuration: configuration,
+        diagnostics: diagnostics, session: { session })
+}
+
+private func signedInSession() -> InstagramSession {
+    InstagramSession(cookies: [
+        .init(name: "sessionid", value: "s3", domain: ".instagram.com", path: "/"),
+        .init(name: "csrftoken", value: "csrf", domain: ".instagram.com", path: "/"),
+    ])
+}
+
+private func apiJSON(_ image: String) -> String {
+    #"{"status":"ok","items":[{"image_versions2":{"candidates":[{"url":"\#(image)","width":1080}]},"caption":{"text":"Private post"}}]}"#
 }
 
 /// Sidecar-HTML mit den gegebenen Medien; `.mp4` wird zum Video, alles andere zum Bild.
@@ -230,5 +247,88 @@ struct InstagramMediaLoaderTests {
         defer { try? FileManager.default.removeItem(at: download.files[0].deletingLastPathComponent()) }
 
         #expect(sink.reports.isEmpty)
+    }
+
+    // MARK: Signed-in fallback
+
+    @Test func anonymousSuccessDoesNotCallTheAPI() async throws {
+        let image = "https://\(UUID().uuidString).test/1.jpg"
+        StubProtocol.serve(image, .init(body: Data("x".utf8)))
+        let code = "AbCdEf1"
+        let apiURL = "https://www.instagram.com/api/v1/media/\(InstagramMediaID.string(for: code)!)/info/"
+
+        let download = try #require(
+            await loader(embedHTML(mediaHTML([image])), session: signedInSession())
+                .download(for: URL(string: "https://www.instagram.com/p/\(code)/")!))
+        defer { try? FileManager.default.removeItem(at: download.files[0].deletingLastPathComponent()) }
+
+        #expect(download.files.count == 1)
+        #expect(!StubProtocol.requests.contains { $0.url?.absoluteString == apiURL })
+    }
+
+    @Test func signedInMediaIsUsedWhenTheEmbedHasNone() async throws {
+        let image = "https://\(UUID().uuidString).test/1.jpg"
+        let code = "Signed1"
+        let apiURL = "https://www.instagram.com/api/v1/media/\(InstagramMediaID.string(for: code)!)/info/"
+        StubProtocol.serve(image, .init(body: Data("x".utf8)))
+        StubProtocol.serve(apiURL, .init(
+            headers: ["Content-Type": "application/json"], body: Data(apiJSON(image).utf8)))
+        let sink = ReportSink()
+
+        let download = try #require(
+            await loader("<html></html>", diagnostics: { sink.record($0) }, session: signedInSession())
+                .download(for: URL(string: "https://www.instagram.com/p/\(code)/")!))
+        defer { try? FileManager.default.removeItem(at: download.files[0].deletingLastPathComponent()) }
+
+        #expect(download.files.count == 1)
+        #expect(download.caption == "Private post")
+        #expect(sink.reports.isEmpty)
+        let request = try #require(StubProtocol.requests.first { $0.url?.absoluteString == apiURL })
+        #expect(request.value(forHTTPHeaderField: "Cookie")?.contains("sessionid=s3") == true)
+        #expect(request.value(forHTTPHeaderField: "Cookie")?.contains("csrftoken=csrf") == true)
+        #expect(request.value(forHTTPHeaderField: "X-CSRFToken") == "csrf")
+        #expect(request.value(forHTTPHeaderField: "X-IG-App-ID") == "936619743392459")
+        #expect(request.value(forHTTPHeaderField: "X-Requested-With") == "XMLHttpRequest")
+    }
+
+    @Test func expiredSessionIsReported() async throws {
+        let code = "Expired1"
+        let apiURL = "https://www.instagram.com/api/v1/media/\(InstagramMediaID.string(for: code)!)/info/"
+        StubProtocol.serve(apiURL, .init(
+            status: 302, headers: ["Location": "https://www.instagram.com/accounts/login/"], body: Data()))
+        StubProtocol.serve("https://www.instagram.com/accounts/login/", .init(body: Data("<html>login</html>".utf8)))
+        let sink = ReportSink()
+
+        #expect(await loader("<html></html>", diagnostics: { sink.record($0) }, session: signedInSession())
+            .download(for: URL(string: "https://www.instagram.com/p/\(code)/")!) == nil)
+        let report = try #require(sink.reports.first)
+        #expect(sink.reports.count == 1)
+        #expect(report.contains("signed-in media API"))
+        #expect(report.contains("session expired"))
+    }
+
+    @Test func noSessionDoesNotCallTheAPI() async {
+        let code = "NoSess1"
+        let apiURL = "https://www.instagram.com/api/v1/media/\(InstagramMediaID.string(for: code)!)/info/"
+        let sink = ReportSink()
+
+        #expect(await loader("<html></html>", diagnostics: { sink.record($0) })
+            .download(for: URL(string: "https://www.instagram.com/p/\(code)/")!) == nil)
+        #expect(!StubProtocol.requests.contains { $0.url?.absoluteString == apiURL })
+        #expect(sink.reports.first?.contains("decode contextJSON") == true)
+    }
+
+    @Test func anExpiredStoredSessionIsMentioned() async throws {
+        let expired = InstagramSession(cookies: [
+            .init(name: "sessionid", value: "old", domain: ".instagram.com", path: "/",
+                  expires: .now.addingTimeInterval(-60)),
+        ])
+        let sink = ReportSink()
+
+        #expect(await loader("<html></html>", diagnostics: { sink.record($0) }, session: expired)
+            .download(for: URL(string: "https://www.instagram.com/p/Expired0/")!) == nil)
+        let report = try #require(sink.reports.first)
+        #expect(report.contains("decode contextJSON"))
+        #expect(report.contains("session has expired"))
     }
 }
