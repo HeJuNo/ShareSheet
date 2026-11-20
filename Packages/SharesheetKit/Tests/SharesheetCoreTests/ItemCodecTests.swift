@@ -150,3 +150,16 @@ import Testing
         #expect(try ItemCodec.decode(ItemCodec.encode(decoded), id: original.id) == decoded)
     }
 }
+
+@Test func mediaRoundTripsInTheFile() throws {
+    var item = Item.fixture(title: "Reel")
+    item.media = ["Unsorted/reel-2026-11-20.jpg", "Unsorted/reel-2026-11-20-2.mp4"]
+    let text = ItemCodec.encode(item)
+    #expect(text.contains(#"media: ["Unsorted/reel-2026-11-20.jpg", "Unsorted/reel-2026-11-20-2.mp4"]"#))
+    #expect(try ItemCodec.decode(text, id: item.id) == item)
+}
+
+@Test func aFileWithoutMediaDecodesToNone() throws {
+    let item = try ItemCodec.decode(ItemCodec.encode(Item.fixture()), id: ItemID(relativePath: "Unsorted/T.md"))
+    #expect(item.media.isEmpty)
+}

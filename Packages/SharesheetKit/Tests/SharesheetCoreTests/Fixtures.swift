@@ -15,6 +15,7 @@ extension Item {
         image: String? = nil,
         screenshot: String? = nil,
         archive: String? = nil,
+        media: [String] = [],
         capture: CaptureState? = nil,
         content: String? = nil,
         note: String = "",
@@ -25,7 +26,7 @@ extension Item {
         Item(
             id: ItemID(relativePath: id), type: type, url: url, file: file, title: title,
             description: description, tags: tags, favorite: favorite, created: created,
-            image: image, screenshot: screenshot, archive: archive, capture: capture,
+            image: image, screenshot: screenshot, archive: archive, media: media, capture: capture,
             note: note, content: content, highlights: highlights,
             extraFrontmatter: extraFrontmatter, extraBody: extraBody)
     }

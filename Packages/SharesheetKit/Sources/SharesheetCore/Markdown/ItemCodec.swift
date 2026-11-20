@@ -9,7 +9,7 @@ public enum CodecError: Error, Equatable {
 public enum ItemCodec {
     private static let knownKeys: Set<String> = [
         "type", "url", "file", "title", "description", "tags", "favorite", "created", "created_manual", "title_manual", "field", "field_manual", "field_deleted",
-        "image", "screenshot", "screenshot_dark", "archive", "capture",
+        "image", "screenshot", "screenshot_dark", "archive", "media", "capture",
     ]
     private static let highlightsHeading = "## Highlights"
     private static let noteHeading = "## Note"
@@ -35,6 +35,7 @@ public enum ItemCodec {
         if let screenshot = item.screenshot { lines.append("screenshot: \(quote(screenshot))") }
         if let dark = item.screenshotDark { lines.append("screenshot_dark: \(quote(dark))") }
         if let archive = item.archive { lines.append("archive: \(quote(archive))") }
+        if !item.media.isEmpty { lines.append("media: [\(item.media.map(quote).joined(separator: ", "))]") }
         if let capture = item.capture { lines.append("capture: \(capture.rawValue)") }
         lines.append(contentsOf: item.extraFrontmatter)
         lines.append("---")
@@ -153,7 +154,7 @@ public enum ItemCodec {
             favorite: favorite, created: created, createdManual: createdManual, fields: fields, titleManual: titleManual,
             fieldsManual: fieldsManual, fieldsDeleted: fieldsDeleted, image: try optional("image"),
             screenshot: try optional("screenshot"), screenshotDark: try optional("screenshot_dark"),
-            archive: try optional("archive"),
+            archive: try optional("archive"), media: try list(values["media"], key: "media"),
             capture: capture, extraFrontmatter: extra)
 
         var body = Array(all[(end + 1)...])
@@ -281,6 +282,15 @@ public enum ItemCodec {
             return String(s.dropFirst().dropLast()).replacingOccurrences(of: "''", with: "'")
         }
         return s
+    }
+
+    /// A JSON array of strings in one frontmatter line; absent means empty.
+    private static func list(_ raw: String?, key: String) throws -> [String] {
+        guard let raw else { return [] }
+        guard let list = try? JSONDecoder().decode([String].self, from: Data(raw.utf8)) else {
+            throw CodecError.invalidValue(key)
+        }
+        return list
     }
 
     private static func tags(_ raw: String?) throws -> [String] {

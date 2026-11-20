@@ -76,10 +76,12 @@ public struct Item: Equatable, Sendable {
     /// The page in its own dark appearance, captured only for pages that have one.
     public var screenshotDark: String?
     public var archive: String?
+    /// Downloaded post media (images/videos), library-relative.
+    public var media: [String]
 
     /// Every attachment path this item refers to, library-relative.
     public var attachmentReferences: [String] {
-        [file, image, screenshot, screenshotDark, archive].compactMap { $0 }
+        [file, image, screenshot, screenshotDark, archive].compactMap { $0 } + media
     }
 
     /// Replaces attachment paths (`old` -> `new`); paths not in `map` stay.
@@ -90,16 +92,23 @@ public struct Item: Equatable, Sendable {
         screenshot = mapped(screenshot)
         screenshotDark = mapped(screenshotDark)
         archive = mapped(archive)
+        media = media.map { map[$0] ?? $0 }
     }
 
     /// Where each attachment of this item went in `other` (the same item after a move).
     public func attachmentMoves(to other: Item) -> [AttachmentMove] {
-        let pairs = [(file, other.file), (image, other.image), (screenshot, other.screenshot),
+        let pairs: [(String?, String?)] = [
+            (file, other.file), (image, other.image), (screenshot, other.screenshot),
             (screenshotDark, other.screenshotDark), (archive, other.archive)]
-        return pairs.compactMap { old, new in
+        let fixed: [AttachmentMove] = pairs.compactMap { old, new in
             guard let old, let new, old != new else { return nil }
             return AttachmentMove(from: old, to: new)
         }
+        var mediaMoves: [AttachmentMove] = []
+        for (old, new) in zip(media, other.media) where old != new {
+            mediaMoves.append(AttachmentMove(from: old, to: new))
+        }
+        return fixed + mediaMoves
     }
     public var capture: CaptureState?
     public var note: String
@@ -116,6 +125,7 @@ public struct Item: Equatable, Sendable {
         description: String? = nil, tags: [String] = [], favorite: Bool = false, created: Date,
         createdManual: Bool = false, fields: [String: FieldValue] = [:], titleManual: Bool = false,
         fieldsManual: Set<String> = [], fieldsDeleted: Set<String> = [], image: String? = nil, screenshot: String? = nil, screenshotDark: String? = nil, archive: String? = nil,
+        media: [String] = [],
         capture: CaptureState? = nil, note: String = "", content: String? = nil,
         highlights: [String] = [], extraFrontmatter: [String] = [], extraBody: String = ""
     ) {
@@ -137,6 +147,7 @@ public struct Item: Equatable, Sendable {
         self.screenshot = screenshot
         self.screenshotDark = screenshotDark
         self.archive = archive
+        self.media = media
         self.capture = capture
         self.note = note
         self.content = content

@@ -449,3 +449,32 @@ private func mkdir(_ root: URL, _ path: String) throws {
     #expect(try await store.item(item.id).file == "_attachments/x.pdf")
     #expect(exists(root, "_attachments/x.pdf"))
 }
+
+@Test func moveTakesTheMediaAlong() async throws {
+    let (store, root) = try makeStore()
+    let image = try await store.addAttachment(
+        from: try tempFile(named: "1.jpg", bytes: 5), preferredName: "1.jpg", in: .unsorted)
+    var item = try await store.create(.fixture(), in: .unsorted)
+    item.media = [image]
+    item = try await store.update(item)
+
+    let moved = try await store.move(item.id, to: CollectionPath(components: ["Billa"]))
+
+    #expect(moved.media == ["Billa/1.jpg"])
+    #expect(exists(root, "Billa/1.jpg"))
+}
+
+@Test func deleteTrashesTheMedia() async throws {
+    let trash = RecordingTrash()
+    let (store, root) = try makeStore(trash: trash)
+    let image = try await store.addAttachment(
+        from: try tempFile(named: "1.jpg", bytes: 5), preferredName: "1.jpg", in: .unsorted)
+    var item = try await store.create(.fixture(title: "A"), in: .unsorted)
+    item.media = [image]
+    item = try await store.update(item)
+
+    try await store.delete(item.id)
+
+    #expect(trash.trashed.map(\.lastPathComponent) == ["A.md", "1.jpg"])
+    #expect(!exists(root, "Unsorted/1.jpg"))
+}
