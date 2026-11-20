@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "SharesheetCore", targets: ["SharesheetCore"]),
         .library(name: "SharesheetUI", targets: ["SharesheetUI"]),
+        .library(name: "InstagramMedia", targets: ["InstagramMedia"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", from: "7.12.0"),
@@ -21,8 +22,12 @@ let package = Package(
             ]
         ),
         .target(name: "SharesheetUI", dependencies: ["SharesheetCore"]),
+        .target(name: "InstagramMedia", dependencies: ["SharesheetCore"]),
         .testTarget(
             name: "SharesheetCoreTests",
             dependencies: ["SharesheetCore", .product(name: "GRDB", package: "GRDB.swift")]),
+        .testTarget(
+            name: "InstagramMediaTests",
+            dependencies: ["InstagramMedia", "SharesheetCore"]),
     ]
 )
