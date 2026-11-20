@@ -273,22 +273,19 @@ actor CaptureRunner {
             }
         }
         guard let current = try? await store.item(id) else { return }
-        var paths: [String] = []
-        for file in download.files {
-            let ext = file.pathExtension.isEmpty ? "bin" : file.pathExtension
-            let name = FileNamer.attachmentName(base: current.title, date: current.created, ext: ext, existing: [])
-            if let path = try? await store.addAttachment(
-                from: file, preferredName: name, in: current.id.collection) {
-                paths.append(path)
-            }
+        let names = download.files.map { file in
+            FileNamer.attachmentName(
+                base: current.title, date: current.created,
+                ext: file.pathExtension.isEmpty ? "bin" : file.pathExtension, existing: [])
         }
-        guard !paths.isEmpty else { return }
-        let media = paths
         let caption = download.caption
-        guard let saved = try? await store.modify(id, {
-            $0.media = media
-            if let caption, ($0.description ?? "").isEmpty { $0.description = caption }
-        }) else { return }
+        guard let saved = try? await store.addMedia(
+            from: download.files, preferredNames: names, to: id,
+            update: { item, paths in
+                item.media = paths
+                if let caption, (item.description ?? "").isEmpty { item.description = caption }
+            }
+        ) else { return }
         try? index.upsert(saved)
     }
 

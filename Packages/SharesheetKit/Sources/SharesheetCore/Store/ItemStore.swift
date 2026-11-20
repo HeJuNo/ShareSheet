@@ -17,6 +17,12 @@ public protocol ItemStore: Sendable {
     func delete(_ id: ItemID) async throws
     /// Copies the file next to the items of `collection`; returns the library-relative path, e.g. `Billa/2026/x.png`.
     func addAttachment(from source: URL, preferredName: String, in collection: CollectionPath) async throws -> String
+    /// Copies all files next to the item and applies `update` with their library-relative paths, in one step no
+    /// other mutation of this store interleaves with. Copied files are removed when a copy or the update fails.
+    func addMedia(
+        from sources: [URL], preferredNames: [String], to id: ItemID,
+        update: @Sendable (inout Item, [String]) throws -> Void
+    ) async throws -> Item
     /// Brings every item's attachments into the folder of its info file (older libraries kept them in `_attachments`).
     /// Does nothing while the library is incomplete (files still in iCloud). Returns what moved or was copied.
     func consolidateAttachments() async throws -> [AttachmentMove]
@@ -43,6 +49,20 @@ extension ItemStore {
 
     public func create(_ draft: ItemDraft, in collection: CollectionPath) async throws -> Item {
         try await create(draft, in: collection, willWrite: { _ in })
+    }
+
+    /// Fallback for stores that do not implement the atomic version; the real store overrides it.
+    public func addMedia(
+        from sources: [URL], preferredNames: [String], to id: ItemID,
+        update: @Sendable (inout Item, [String]) throws -> Void
+    ) async throws -> Item {
+        let collection = try await item(id).id.collection
+        var paths: [String] = []
+        for (source, name) in zip(sources, preferredNames) {
+            paths.append(try await addAttachment(from: source, preferredName: name, in: collection))
+        }
+        let media = paths
+        return try await modify(id) { try update(&$0, media) }
     }
 }
 

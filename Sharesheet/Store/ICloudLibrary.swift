@@ -65,6 +65,12 @@ struct ResolvingItemStore: ItemStore {
     func addAttachment(from source: URL, preferredName: String, in collection: CollectionPath) async throws -> String {
         try await store().addAttachment(from: source, preferredName: preferredName, in: collection)
     }
+    func addMedia(
+        from sources: [URL], preferredNames: [String], to id: ItemID,
+        update: @Sendable (inout Item, [String]) throws -> Void
+    ) async throws -> Item {
+        try await store().addMedia(from: sources, preferredNames: preferredNames, to: id, update: update)
+    }
     func attachmentURL(_ relativePath: String) async throws -> URL { try await store().attachmentURL(relativePath) }
     func consolidateAttachments() async throws -> [AttachmentMove] { try await store().consolidateAttachments() }
     func collections() async throws -> [CollectionPath] { try await store().collections() }

@@ -478,3 +478,55 @@ private func mkdir(_ root: URL, _ path: String) throws {
     #expect(trash.trashed.map(\.lastPathComponent) == ["A.md", "1.jpg"])
     #expect(!exists(root, "Unsorted/1.jpg"))
 }
+
+@Test func addMediaCopiesAllFilesAndWritesThemInOneStep() async throws {
+    let (store, root) = try makeStore()
+    let item = try await store.create(.fixture(), in: .unsorted)
+    let first = try tempFile(named: "a.jpg", bytes: 4)
+    let second = try tempFile(named: "b.mp4", bytes: 5)
+
+    let saved = try await store.addMedia(
+        from: [first, second], preferredNames: ["a.jpg", "b.mp4"], to: item.id
+    ) { item, paths in
+        item.media = paths
+    }
+
+    #expect(saved.media.count == 2)
+    #expect(saved.media.allSatisfy { exists(root, $0) })
+    #expect(try await store.item(item.id).media == saved.media)
+}
+
+@Test func addMediaRemovesCopiedFilesWhenTheUpdateFails() async throws {
+    struct Boom: Error {}
+    let (store, root) = try makeStore()
+    let item = try await store.create(.fixture(), in: .unsorted)
+    let file = try tempFile(named: "a.jpg", bytes: 4)
+
+    await #expect(throws: Boom.self) {
+        _ = try await store.addMedia(from: [file], preferredNames: ["a.jpg"], to: item.id) { _, _ in
+            throw Boom()
+        }
+    }
+
+    let names = try FileManager.default.contentsOfDirectory(atPath: root.appending(path: "Unsorted").path)
+    #expect(!names.contains { $0.hasSuffix(".jpg") })
+    #expect(try await store.item(item.id).media.isEmpty)
+}
+
+@Test func addMediaRemovesEarlierCopiesWhenACopyFails() async throws {
+    let (store, root) = try makeStore()
+    let item = try await store.create(.fixture(), in: .unsorted)
+    let good = try tempFile(named: "a.jpg", bytes: 4)
+    let missing = root.appending(path: "missing.jpg")
+
+    await #expect(throws: (any Error).self) {
+        _ = try await store.addMedia(
+            from: [good, missing], preferredNames: ["a.jpg", "b.jpg"], to: item.id
+        ) { item, paths in
+            item.media = paths
+        }
+    }
+
+    let names = try FileManager.default.contentsOfDirectory(atPath: root.appending(path: "Unsorted").path)
+    #expect(!names.contains { $0.hasSuffix(".jpg") })
+}

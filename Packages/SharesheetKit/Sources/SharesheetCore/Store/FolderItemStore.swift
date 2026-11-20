@@ -292,6 +292,24 @@ public actor FolderItemStore: ItemStore, TrashStore {
         return (collection.components + [name]).joined(separator: "/")
     }
 
+    public func addMedia(
+        from sources: [URL], preferredNames: [String], to id: ItemID,
+        update: @Sendable (inout Item, [String]) throws -> Void
+    ) async throws -> Item {
+        let collection = try read(id).id.collection
+        var paths: [String] = []
+        do {
+            for (source, name) in zip(sources, preferredNames) {
+                paths.append(try addAttachment(from: source, preferredName: name, in: collection))
+            }
+            let media = paths
+            return try modify(id) { try update(&$0, media) }
+        } catch {
+            for path in paths { try? FileManager.default.removeItem(at: try fileURL(path)) }
+            throw error
+        }
+    }
+
     public func consolidateAttachments() throws -> [AttachmentMove] {
         // Only libraries with a leftover `_attachments` folder have anything to merge; skip the scan otherwise.
         guard !((try? entries(at: CollectionPath(components: [Self.attachments]))) ?? []).isEmpty else { return [] }
