@@ -29,3 +29,21 @@ public enum InstagramPost {
         return (kind, code)
     }
 }
+
+extension InstagramPost {
+    public struct Media: Equatable, Sendable {
+        public enum Kind: String, Sendable { case image, video }
+        public var kind: Kind
+        public var url: URL
+        public init(kind: Kind, url: URL) { self.kind = kind; self.url = url }
+    }
+
+    public struct Post: Equatable, Sendable {
+        public var media: [Media]
+        public var caption: String?
+        public var author: String?
+        public init(media: [Media], caption: String? = nil, author: String? = nil) {
+            self.media = media; self.caption = caption; self.author = author
+        }
+    }
+}
