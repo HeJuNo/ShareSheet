@@ -645,6 +645,14 @@ enum TrashSettings {
         reloadFromIndex()
     }
 
+    /// Loads media for an already saved Instagram item, e.g. after signing in.
+    func reloadMedia(_ id: ItemID) async -> Bool {
+        guard let runner else { return false }
+        let loaded = await runner.loadMedia(for: id)
+        reloadFromIndex()
+        return loaded
+    }
+
     /// nil when the store is unavailable or the file is missing.
     /// How long `attachmentURL` waits for a file iCloud is still downloading.
     var downloadTimeout: Duration = .seconds(60)
@@ -735,9 +743,10 @@ extension AppModel {
         let store = ResolvingItemStore(library: library)
         let isForeground: @Sendable () async -> Bool = { await UIApplication.shared.applicationState == .active }
         let fetcher = URLSessionFetcher()
-        let instagramMedia = InstagramMediaLoader(fetcher: fetcher, diagnostics: { report in
-            await Self.writeMediaDiagnostic(report)
-        })
+        let instagramMedia = InstagramMediaLoader(
+            fetcher: fetcher,
+            diagnostics: { report in await Self.writeMediaDiagnostic(report) },
+            session: { InstagramSessionStore.shared.load() })
         let runner = CaptureRunner(
             store: store, index: index, capturer: WebPageCapturer(),
             archiver: HTMLArchiver(fetcher: fetcher), favicons: FaviconFetcher(),

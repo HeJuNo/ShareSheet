@@ -262,17 +262,18 @@ actor CaptureRunner {
     }
 
     /// Best effort after the item is `.done`: copy the media next to it, then one second write.
+    @discardableResult
     private func addInstagramMedia(
         for id: ItemID, postURL: URL,
         instagramMedia: @Sendable (URL) async -> InstagramMediaLoader.Download?
-    ) async {
-        guard let download = await instagramMedia(postURL) else { return }
+    ) async -> Bool {
+        guard let download = await instagramMedia(postURL) else { return false }
         defer {
             if let first = download.files.first {
                 try? FileManager.default.removeItem(at: first.deletingLastPathComponent())
             }
         }
-        guard let current = try? await store.item(id) else { return }
+        guard let current = try? await store.item(id) else { return false }
         let names = download.files.map { file in
             FileNamer.attachmentName(
                 base: current.title, date: current.created,
@@ -285,8 +286,20 @@ actor CaptureRunner {
                 item.media = paths
                 if let caption, (item.description ?? "").isEmpty { item.description = caption }
             }
-        ) else { return }
+        ) else { return false }
         try? index.upsert(saved)
+        return !saved.media.isEmpty
+    }
+
+    /// Loads media for an already saved Instagram item, without capturing the page again.
+    func loadMedia(for id: ItemID) async -> Bool {
+        await serialized { runner in
+            guard let item = try? await runner.store.item(id), let url = item.url,
+                  SocialEmbed.platform(of: url) == .instagram,
+                  let instagramMedia = runner.instagramMedia
+            else { return false }
+            return await runner.addInstagramMedia(for: id, postURL: url, instagramMedia: instagramMedia)
+        }
     }
 
     private func storeFavicon(host: String?, iconURL: URL?) async {

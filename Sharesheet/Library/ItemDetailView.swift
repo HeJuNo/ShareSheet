@@ -42,7 +42,7 @@ struct ItemDetailView: View {
     }
 
     private enum Failure {
-        case gone, load, save, move, delete, createCollection
+        case gone, load, save, move, delete, createCollection, media
 
         var title: Text {
             switch self {
@@ -52,6 +52,7 @@ struct ItemDetailView: View {
             case .move: Text("Couldn’t move the item")
             case .delete: Text("Couldn’t delete the item")
             case .createCollection: Text("Couldn’t create the collection")
+            case .media: Text("Couldn’t load media")
             }
         }
 
@@ -72,6 +73,7 @@ struct ItemDetailView: View {
     @State private var saveTask: Task<Void, Never>?
     @State private var isGone = false
     @State private var isCapturing = false
+    @State private var isLoadingMedia = false
     @State private var confirmsDelete = false
     /// The name of the field open in the edit sheet.
     @State private var editingField: String?
@@ -135,6 +137,11 @@ struct ItemDetailView: View {
         }
         .alert(failure?.title ?? Text(verbatim: ""), isPresented: $failure.isPresent(), presenting: failure) { failure in
             Button("OK") { if failure.leavesScreen { dismiss() } }
+        } message: { failure in
+            switch failure {
+            case .media: Text("For private posts, connect Instagram in Settings.")
+            default: Text(verbatim: item?.title ?? "")
+            }
         }
     }
 
@@ -150,6 +157,24 @@ struct ItemDetailView: View {
                 TextField("Title", text: titleBinding, axis: .vertical)
                     .font(.title3.bold())
                 metadata(item)
+            }
+            if showsMediaLoader(item) {
+                Section {
+                    Button {
+                        Task { await loadMedia() }
+                    } label: {
+                        HStack {
+                            Label("Load media", systemImage: "arrow.down.circle")
+                            if isLoadingMedia {
+                                Spacer()
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(isLoadingMedia)
+                } footer: {
+                    Text("For private posts, connect Instagram in Settings first.")
+                }
             }
             if !item.fields.isEmpty {
                 Section("Fields") {
@@ -509,6 +534,19 @@ struct ItemDetailView: View {
         await model.retryCapture(id)
         isCapturing = false
         if let loaded = try? await model.loadItem(id) { merge(loaded, since: baseline) }
+    }
+
+    private func showsMediaLoader(_ item: Item) -> Bool {
+        item.media.isEmpty && item.capture == .done
+            && item.url.map { SocialEmbed.platform(of: $0) == .instagram } == true
+    }
+
+    private func loadMedia() async {
+        isLoadingMedia = true
+        let loaded = await model.reloadMedia(id)
+        isLoadingMedia = false
+        if let item = try? await model.loadItem(id) { merge(item, since: baseline) }
+        if !loaded { failure = .media }
     }
 }
 

@@ -670,4 +670,36 @@ struct CaptureRunnerTests {
 
         #expect(asked.value == 0)
     }
+
+    @Test func loadingMediaForAnExistingPostAddsIt() async throws {
+        let env = try Env()
+        let item = try await env.makeItem(
+            "reel", capture: .done, url: URL(string: "https://www.instagram.com/p/C1a2b3c/")!)
+        let folder = try makeTemporaryMediaFolder()
+        let runner = env.runner(FakeCapturer(), instagram: { _ in
+            .init(files: [folder.appending(path: "1.jpg")], caption: "Caption")
+        })
+
+        #expect(await runner.loadMedia(for: item.id))
+
+        let saved = try await env.store.item(item.id)
+        #expect(saved.media.count == 1)
+        #expect(saved.description == "Caption")
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
+        #expect(try env.index.search(LibraryQuery(scope: .all)).contains { $0.id == item.id })
+    }
+
+    @Test func loadingMediaForANonInstagramPostDoesNothing() async throws {
+        let env = try Env()
+        let item = try await env.makeItem("plain", capture: .done)
+        let asked = LockedCounter()
+        let runner = env.runner(FakeCapturer(), instagram: { _ in
+            asked.increment()
+            return nil
+        })
+
+        #expect(await runner.loadMedia(for: item.id) == false)
+        #expect(asked.value == 0)
+        #expect(try await env.store.item(item.id).media.isEmpty)
+    }
 }
