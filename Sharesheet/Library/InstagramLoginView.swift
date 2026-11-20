@@ -9,10 +9,15 @@ final class InstagramLoginModel {
     let webView: WKWebView
 
     init() {
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        webView = WKWebView(frame: .zero, configuration: Self.makeConfiguration())
         webView.load(URLRequest(url: URL(string: "https://www.instagram.com/accounts/login/")!))
+    }
+
+    /// The login page keeps its cookies in memory only; the keychain is the one persistent copy.
+    static func makeConfiguration() -> WKWebViewConfiguration {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        return configuration
     }
 
     func readSession() async -> InstagramSession? {

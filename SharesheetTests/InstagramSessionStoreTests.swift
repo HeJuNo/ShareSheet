@@ -1,5 +1,6 @@
 import Foundation
 import InstagramMedia
+import Security
 import Testing
 @testable import Sharesheet
 
@@ -12,12 +13,14 @@ struct InstagramSessionStoreTests {
     }
 
     /// `work/build.sh sim-test` builds the host unsigned, which cannot access the keychain
-    /// (`errSecMissingEntitlement`). A signed run or the device exercises these tests.
+    /// (`errSecMissingEntitlement`); any other failure fails the test instead of skipping it.
     private func makeStore() -> InstagramSessionStore? {
         let store = InstagramSessionStore(service: "test-\(UUID().uuidString)")
-        guard store.save(session()) else { return nil }
+        let status = store.saveStatus(session())
         store.clear()
-        return store
+        if status == errSecMissingEntitlement { return nil }
+        #expect(status == errSecSuccess, "Keychain save failed with status \(status)")
+        return status == errSecSuccess ? store : nil
     }
 
     @Test func roundTripsAndClears() {
@@ -41,5 +44,9 @@ struct InstagramSessionStoreTests {
 
         #expect(store.save(expired))
         #expect(store.load()?.isUsable == false)
+    }
+
+    @Test @MainActor func loginUsesANonPersistentWebStore() {
+        #expect(!InstagramLoginModel.makeConfiguration().websiteDataStore.isPersistent)
     }
 }

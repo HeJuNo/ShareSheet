@@ -23,12 +23,17 @@ struct InstagramSessionStore: Sendable {
 
     @discardableResult
     func save(_ session: InstagramSession) -> Bool {
-        guard let data = try? JSONEncoder().encode(session) else { return false }
+        saveStatus(session) == errSecSuccess
+    }
+
+    /// The raw status lets tests distinguish an unsigned test host from a real failure.
+    func saveStatus(_ session: InstagramSession) -> OSStatus {
+        guard let data = try? JSONEncoder().encode(session) else { return errSecParam }
         clear()
         var attributes = baseQuery
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
+        return SecItemAdd(attributes as CFDictionary, nil)
     }
 
     func clear() {
