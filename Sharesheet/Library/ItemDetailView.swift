@@ -143,6 +143,10 @@ struct ItemDetailView: View {
             Section {
                 header(item)
                     .listRowInsets(EdgeInsets())
+                if !item.media.isEmpty {
+                    MediaStrip(paths: item.media) { previewURL = $0 }
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
+                }
                 TextField("Title", text: titleBinding, axis: .vertical)
                     .font(.title3.bold())
                 metadata(item)
@@ -505,6 +509,79 @@ struct ItemDetailView: View {
         await model.retryCapture(id)
         isCapturing = false
         if let loaded = try? await model.loadItem(id) { merge(loaded, since: baseline) }
+    }
+}
+
+/// The downloaded images and videos of a post, in post order; tapping opens Quick Look.
+private struct MediaStrip: View {
+    let paths: [String]
+    let open: (URL) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Media")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(paths, id: \.self) { path in
+                        MediaThumbnail(relativePath: path, open: open)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+    }
+}
+
+private struct MediaThumbnail: View {
+    let relativePath: String
+    let open: (URL) -> Void
+    @Environment(AppModel.self) private var model
+    @Environment(\.displayScale) private var displayScale
+    @State private var url: URL?
+    @State private var thumbnail: UIImage?
+
+    private static let size: CGFloat = 140
+
+    private var isVideo: Bool {
+        ["mp4", "mov", "m4v"].contains((relativePath as NSString).pathExtension.lowercased())
+    }
+
+    var body: some View {
+        Button {
+            if let url { open(url) }
+        } label: {
+            ZStack {
+                if let thumbnail {
+                    Image(uiImage: thumbnail)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Color.secondary.opacity(0.15)
+                }
+                if isVideo {
+                    Image(systemName: "play.circle.fill")
+                        .font(.largeTitle)
+                        .foregroundStyle(.white)
+                        .shadow(radius: 3)
+                }
+            }
+            .frame(width: Self.size, height: Self.size)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(url == nil)
+        .accessibilityLabel(Text((relativePath as NSString).lastPathComponent))
+        .task(id: relativePath) {
+            url = await model.attachmentURL(relativePath)
+            guard let url else { return }
+            let request = QLThumbnailGenerator.Request(
+                fileAt: url, size: CGSize(width: Self.size, height: Self.size), scale: displayScale,
+                representationTypes: .thumbnail)
+            thumbnail = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).uiImage
+        }
     }
 }
 
