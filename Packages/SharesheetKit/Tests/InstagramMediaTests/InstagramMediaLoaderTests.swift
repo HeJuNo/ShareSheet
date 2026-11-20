@@ -60,10 +60,22 @@ private final class RecordingEmbed: ResourceFetching, @unchecked Sendable {
     }
 }
 
-private func loader(_ html: String, limits: InstagramMediaLoader.Limits = .init()) -> InstagramMediaLoader {
+private final class ReportSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _reports: [String] = []
+
+    var reports: [String] { lock.withLock { _reports } }
+    func record(_ report: String) { lock.withLock { _reports.append(report) } }
+}
+
+private func loader(
+    _ html: String, limits: InstagramMediaLoader.Limits = .init(),
+    diagnostics: InstagramMediaLoader.Diagnostics? = nil
+) -> InstagramMediaLoader {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [StubProtocol.self]
-    return InstagramMediaLoader(fetcher: StubEmbed(html: html), limits: limits, configuration: configuration)
+    return InstagramMediaLoader(
+        fetcher: StubEmbed(html: html), limits: limits, configuration: configuration, diagnostics: diagnostics)
 }
 
 /// Sidecar-HTML mit den gegebenen Medien; `.mp4` wird zum Video, alles andere zum Bild.
@@ -162,5 +174,61 @@ struct InstagramMediaLoaderTests {
         let loader = InstagramMediaLoader(fetcher: embed)
         #expect(await loader.download(for: URL(string: "https://example.com/p/C1a2b3c/")!) == nil)
         #expect(embed.asked == 0)
+    }
+
+    // MARK: Diagnostics
+
+    @Test func reportsAFailedEmbedFetch() async throws {
+        let sink = ReportSink()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubProtocol.self]
+        let loader = InstagramMediaLoader(
+            fetcher: FailingEmbed(), limits: .init(), configuration: configuration,
+            diagnostics: { sink.record($0) })
+
+        #expect(await loader.download(for: postURL) == nil)
+        let report = try #require(sink.reports.first)
+        #expect(report.contains("# Bug: Instagram media download failed"))
+        #expect(report.contains(postURL.absoluteString))
+        #expect(report.contains("fetch embed page"))
+    }
+
+    @Test func reportsADecodeFailure() async throws {
+        let sink = ReportSink()
+
+        #expect(await loader("<html></html>", diagnostics: { sink.record($0) }).download(for: postURL) == nil)
+        let report = try #require(sink.reports.first)
+        #expect(report.contains("decode contextJSON"))
+    }
+
+    @Test func reportsTheMediaThatFailedWhileOthersSucceeded() async throws {
+        let good = "https://\(UUID().uuidString).test/1.jpg"
+        let bad = "https://\(UUID().uuidString).test/2.jpg"
+        StubProtocol.serve(good, .init(body: Data("ok".utf8)))
+        StubProtocol.serve(bad, .init(status: 404, body: Data()))
+        let sink = ReportSink()
+
+        let download = try #require(
+            await loader(embedHTML(mediaHTML([bad, good])), diagnostics: { sink.record($0) })
+                .download(for: postURL))
+        defer { try? FileManager.default.removeItem(at: download.files[0].deletingLastPathComponent()) }
+
+        #expect(download.files.count == 1)
+        let report = try #require(sink.reports.first)
+        #expect(report.contains("1 of 2 failed"))
+        #expect(report.contains(bad))
+        #expect(report.contains("HTTP 404"))
+    }
+
+    @Test func successWritesNoReport() async throws {
+        let url = "https://\(UUID().uuidString).test/1.jpg"
+        StubProtocol.serve(url, .init(body: Data("x".utf8)))
+        let sink = ReportSink()
+
+        let download = try #require(
+            await loader(embedHTML(mediaHTML([url])), diagnostics: { sink.record($0) }).download(for: postURL))
+        defer { try? FileManager.default.removeItem(at: download.files[0].deletingLastPathComponent()) }
+
+        #expect(sink.reports.isEmpty)
     }
 }

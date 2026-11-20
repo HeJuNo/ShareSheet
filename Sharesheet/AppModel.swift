@@ -735,7 +735,9 @@ extension AppModel {
         let store = ResolvingItemStore(library: library)
         let isForeground: @Sendable () async -> Bool = { await UIApplication.shared.applicationState == .active }
         let fetcher = URLSessionFetcher()
-        let instagramMedia = InstagramMediaLoader(fetcher: fetcher)
+        let instagramMedia = InstagramMediaLoader(fetcher: fetcher, diagnostics: { report in
+            await Self.writeMediaDiagnostic(report)
+        })
         let runner = CaptureRunner(
             store: store, index: index, capturer: WebPageCapturer(),
             archiver: HTMLArchiver(fetcher: fetcher), favicons: FaviconFetcher(),
@@ -752,6 +754,16 @@ extension AppModel {
             extensionTemporaryRoot: AppGroup.containerURL()?.appending(path: AppGroup.temporaryFolderName, directoryHint: .isDirectory),
             analyzer: analyzer, isForeground: isForeground,
             redirects: redirects, rulesStatus: rulesStatus, ruleApplier: rules)
+    }
+
+    /// A failed Instagram media download leaves a report in the library's hidden `.diagnostics` folder.
+    nonisolated private static func writeMediaDiagnostic(_ report: String) async {
+        guard let root = await ICloudLocator.libraryRoot() else { return }
+        let folder = root.appending(path: ".diagnostics", directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let name = "instagram-media-\(stamp)-\(UUID().uuidString.prefix(8)).md"
+        try? Data(report.utf8).write(to: folder.appending(path: name), options: .atomic)
     }
 
     /// The App Group index the share extension reads; a private fallback when the group is missing.
