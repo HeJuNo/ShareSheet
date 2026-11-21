@@ -88,7 +88,7 @@ struct ItemDetailView: View {
 
     private struct MediaPreview: Identifiable {
         let id = UUID()
-        let urls: [URL]
+        let paths: [String]
         let start: Int
     }
 
@@ -132,7 +132,7 @@ struct ItemDetailView: View {
         .quickLookPreview($previewURL)
         .onChange(of: previewURL) { _, url in if url == nil { OrientationGate.settle() } }
         .fullScreenCover(item: $mediaPreview) { preview in
-            MediaPreviewView(urls: preview.urls, startIndex: preview.start)
+            MediaPreviewView(paths: preview.paths, startIndex: preview.start)
         }
         .sheet(isPresented: $editingField.isPresent()) {
             if let name = editingField, let value = item?.fields[name] {
@@ -568,17 +568,9 @@ struct ItemDetailView: View {
     }
 
     private func openMediaPreview(_ item: Item, at index: Int) {
-        Task {
-            var urls: [URL] = []
-            var start = 0
-            for (position, path) in item.media.enumerated() {
-                guard let url = await model.attachmentURL(path) else { continue }
-                if position == index { start = urls.count }
-                urls.append(url)
-            }
-            guard !urls.isEmpty else { return }
-            mediaPreview = MediaPreview(urls: urls, start: start)
-        }
+        guard item.media.indices.contains(index) else { return }
+        // Each page resolves its own file when shown; opening must not wait on iCloud for the whole post.
+        mediaPreview = MediaPreview(paths: item.media, start: index)
     }
 }
 
@@ -657,12 +649,12 @@ private struct MediaThumbnail: View {
 
 /// Full-screen pager over the post's media; swipe left/right for the next/previous item.
 private struct MediaPreviewView: View {
-    let urls: [URL]
+    let paths: [String]
     @Environment(\.dismiss) private var dismiss
     @State private var selection: Int
 
-    init(urls: [URL], startIndex: Int) {
-        self.urls = urls
+    init(paths: [String], startIndex: Int) {
+        self.paths = paths
         _selection = State(initialValue: startIndex)
     }
 
@@ -670,12 +662,12 @@ private struct MediaPreviewView: View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
             TabView(selection: $selection) {
-                ForEach(urls.indices, id: \.self) { index in
-                    MediaPreviewPage(url: urls[index], isSelected: selection == index)
+                ForEach(paths.indices, id: \.self) { index in
+                    MediaPreviewPage(relativePath: paths[index], isSelected: selection == index)
                         .tag(index)
                 }
             }
-            .tabViewStyle(.page(indexDisplayMode: urls.count > 1 ? .always : .never))
+            .tabViewStyle(.page(indexDisplayMode: paths.count > 1 ? .always : .never))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
             .ignoresSafeArea()
             Button {
@@ -696,14 +688,17 @@ private struct MediaPreviewView: View {
 }
 
 private struct MediaPreviewPage: View {
-    let url: URL
+    let relativePath: String
     let isSelected: Bool
+    @Environment(AppModel.self) private var model
+    @State private var url: URL?
+    @State private var resolved = false
     @State private var player: AVPlayer?
     @State private var image: UIImage?
     @State private var missing = false
 
     private var isVideo: Bool {
-        ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased())
+        ["mp4", "mov", "m4v"].contains((relativePath as NSString).pathExtension.lowercased())
     }
 
     var body: some View {
@@ -711,6 +706,8 @@ private struct MediaPreviewPage: View {
             if isVideo {
                 if let player {
                     VideoPlayer(player: player)
+                } else if missing {
+                    ContentUnavailableView("File missing", systemImage: "photo")
                 } else {
                     ProgressView().tint(.white)
                 }
@@ -728,6 +725,15 @@ private struct MediaPreviewPage: View {
         .task(id: isSelected) {
             guard isSelected else {
                 player?.pause()
+                return
+            }
+            if !resolved {
+                url = await model.attachmentURL(relativePath)
+                resolved = true
+                missing = url == nil
+            }
+            guard let url else {
+                missing = true
                 return
             }
             if isVideo {
