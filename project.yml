@@ -219,8 +219,6 @@ targets:
       - target: Sharesheet
       - package: SharesheetKit
         product: InstagramMedia
-      - package: SharesheetKit
-        product: XMedia
       - package: ZenUniffi
         product: ZenUniffi
     settings:
