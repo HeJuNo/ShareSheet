@@ -12,6 +12,9 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var replies: [String: Reply] = [:]
+    nonisolated(unsafe) private static var _requests: [URLRequest] = []
+
+    static var requests: [URLRequest] { lock.withLock { _requests } }
 
     static func serve(_ url: String, _ reply: Reply) {
         lock.withLock { replies[url] = reply }
@@ -21,6 +24,7 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        Self.lock.withLock { Self._requests.append(request) }
         guard let url = request.url, let reply = Self.lock.withLock({ Self.replies[url.absoluteString] }) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
@@ -54,13 +58,21 @@ private final class ReportSink: @unchecked Sendable {
 
 private func loader(
     _ json: String?, limits: XMediaLoader.Limits = .init(),
-    diagnostics: XMediaLoader.Diagnostics? = nil
+    diagnostics: XMediaLoader.Diagnostics? = nil,
+    session: WebSession? = nil
 ) -> XMediaLoader {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [StubProtocol.self]
     return XMediaLoader(
         fetcher: StubFetcher(body: json), limits: limits, configuration: configuration,
-        diagnostics: diagnostics)
+        diagnostics: diagnostics, session: { session })
+}
+
+private func signedInSession() -> WebSession {
+    WebSession(cookies: [
+        .init(name: "auth_token", value: "a", domain: ".x.com", path: "/"),
+        .init(name: "ct0", value: "c", domain: ".x.com", path: "/"),
+    ])
 }
 
 private let postURL = URL(string: "https://x.com/user/status/1234567890")!
@@ -117,6 +129,61 @@ struct XMediaLoaderTests {
         #expect(await loader(nil, diagnostics: { sink.record($0) }).download(for: postURL) == nil)
 
         #expect(sink.reports.count == 1)
+        #expect(sink.reports.first?.contains("syndication") == true)
+    }
+
+    @Test func signedInPageIsUsedWhenSyndicationHasNoMedia() async throws {
+        let signedInPost = URL(string: "https://x.com/user/status/1111111111")!
+        let pageURL = "https://x.com/i/status/1111111111"
+        let video = "https://video.twimg.com/amplify_video/111/vid/avc1/720x900/v.mp4"
+        StubProtocol.serve(video, .init(body: Data("v".utf8)))
+        StubProtocol.serve(pageURL, .init(
+            headers: ["Content-Type": "text/html"],
+            body: Data(#"""
+            <html><head>
+            <meta property="og:description" content="Private post"/>
+            <meta property="og:image" content="https://pbs.twimg.com/amplify_video_thumb/111/img/p.jpg"/>
+            </head><body><script>{"v":"{\"video_info\":{\"variants\":[
+            {\"content_type\":\"video/mp4\",\"bitrate\":1,\"url\":\"\#(video)\"}
+            ]}}"}</script></body></html>
+            """#.utf8)))
+        let sink = ReportSink()
+
+        let download = try #require(
+            await loader(#"{"text":""}"#, diagnostics: { sink.record($0) }, session: signedInSession())
+                .download(for: signedInPost))
+        defer { try? FileManager.default.removeItem(at: download.files[0].deletingLastPathComponent()) }
+
+        #expect(download.files.count == 1)
+        #expect(download.caption == "Private post")
+        #expect(sink.reports.isEmpty)
+        let page = try #require(StubProtocol.requests.first { $0.url?.absoluteString == pageURL })
+        #expect(page.value(forHTTPHeaderField: "Cookie")?.contains("auth_token=a") == true)
+        #expect(page.value(forHTTPHeaderField: "User-Agent")?.contains("Safari") == true)
+    }
+
+    @Test func anExpiredSignedInSessionIsReported() async throws {
+        let expiredPost = URL(string: "https://x.com/user/status/2222222222")!
+        let expiredPage = "https://x.com/i/status/2222222222"
+        StubProtocol.serve(expiredPage, .init(status: 302, body: Data()))
+        let sink = ReportSink()
+
+        #expect(await loader(#"{"text":""}"#, diagnostics: { sink.record($0) }, session: signedInSession())
+            .download(for: expiredPost) == nil)
+
+        let report = try #require(sink.reports.first)
+        #expect(sink.reports.count == 1)
+        #expect(report.contains("session expired"))
+    }
+
+    @Test func noSessionDoesNotFetchThePage() async {
+        let noSessionPost = URL(string: "https://x.com/user/status/3333333333")!
+        let noSessionPage = "https://x.com/i/status/3333333333"
+        let sink = ReportSink()
+
+        #expect(await loader(#"{"text":""}"#, diagnostics: { sink.record($0) })
+            .download(for: noSessionPost) == nil)
+        #expect(!StubProtocol.requests.contains { $0.url?.absoluteString == noSessionPage })
         #expect(sink.reports.first?.contains("syndication") == true)
     }
 }
