@@ -36,39 +36,29 @@ struct SettingsView: View {
                     }
                 }
                 Section {
-                    if instagramSignedIn {
-                        LabeledContent("Instagram", value: "Connected")
-                        Button("Sign out", role: .destructive) {
+                    accountRow(
+                        "Instagram", signedIn: instagramSignedIn,
+                        connect: { showsInstagramLogin = true },
+                        signOut: {
                             InstagramSessionStore.shared.clear()
                             instagramSignedIn = false
                             Task { await WebLoginModel.clearWebCookies(domain: "instagram.com") }
-                        }
-                    } else {
-                        Button("Connect Instagram") { showsInstagramLogin = true }
-                    }
-                } header: {
-                    Text("Instagram")
-                } footer: {
-                    Text("Private posts need a signed-in session. The cookies stay in the keychain; Instagram’s terms apply.")
-                }
-                Section {
-                    if xSignedIn {
-                        LabeledContent("X", value: "Connected")
-                        Button("Sign out", role: .destructive) {
+                        })
+                    accountRow(
+                        "X", signedIn: xSignedIn,
+                        connect: { showsXLogin = true },
+                        signOut: {
                             WebSessionStore.x.clear()
                             xSignedIn = false
                             Task {
                                 await WebLoginModel.clearWebCookies(domain: "x.com")
                                 await WebLoginModel.clearWebCookies(domain: "twitter.com")
                             }
-                        }
-                    } else {
-                        Button("Connect X") { showsXLogin = true }
-                    }
+                        })
                 } header: {
-                    Text("X")
+                    Text("Accounts")
                 } footer: {
-                    Text("Private or protected posts need a signed-in session. The cookies stay in the keychain; X’s terms apply.")
+                    Text("Private or protected posts need a signed-in session. The cookies stay in the keychain; the service’s terms apply.")
                 }
                 Section {
                     Button {
@@ -164,6 +154,25 @@ struct SettingsView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
+            }
+        }
+    }
+
+    /// One row per service; another login is one more call to this row.
+    private func accountRow(
+        _ name: String, signedIn: Bool, connect: @escaping () -> Void, signOut: @escaping () -> Void
+    ) -> some View {
+        HStack {
+            Text(name)
+            Spacer()
+            if signedIn {
+                Text("Connected")
+                    .foregroundStyle(.secondary)
+                Button("Sign out", role: .destructive, action: signOut)
+                    .accessibilityLabel(Text("Sign out of \(name)"))
+            } else {
+                Button("Connect", action: connect)
+                    .accessibilityLabel(Text("Connect \(name)"))
             }
         }
     }
