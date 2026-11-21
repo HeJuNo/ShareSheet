@@ -56,3 +56,10 @@ struct WebSessionStore: Sendable {
 
 /// Instagram keeps its session in the shared store under the Instagram service.
 typealias InstagramSessionStore = WebSessionStore
+
+extension WebSessionStore {
+    /// X's own keychain entry; the cookie names and domains differ from Instagram.
+    static let x = WebSessionStore(
+        service: "\(Bundle.main.bundleIdentifier ?? "Sharesheet").x-session",
+        account: "x")
+}

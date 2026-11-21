@@ -20,9 +20,11 @@ final class WebLoginModel {
         return configuration
     }
 
-    func readSession(domain: String, requiredCookie: String) async -> WebSession? {
+    func readSession(domains: [String], requiredCookie: String) async -> WebSession? {
         let cookies = await Self.cookies(in: webView.configuration.websiteDataStore.httpCookieStore)
-        let matching = cookies.filter { Self.matches($0.domain, domain) }
+        let matching = cookies.filter { cookie in
+            domains.contains { Self.matches(cookie.domain, $0) }
+        }
         guard matching.contains(where: { $0.name == requiredCookie && !$0.value.isEmpty }) else { return nil }
         return WebSession(cookies: matching.map {
             .init(
@@ -58,7 +60,7 @@ final class WebLoginModel {
 struct WebLoginView: View {
     let url: URL
     let serviceName: String
-    let cookieDomain: String
+    let cookieDomains: [String]
     let requiredCookie: String
     let save: @MainActor (WebSession) -> Bool
     var onSignedIn: () -> Void
@@ -68,12 +70,12 @@ struct WebLoginView: View {
     @State private var problem: String?
 
     init(
-        url: URL, serviceName: String, cookieDomain: String, requiredCookie: String,
+        url: URL, serviceName: String, cookieDomains: [String], requiredCookie: String,
         save: @escaping @MainActor (WebSession) -> Bool, onSignedIn: @escaping () -> Void
     ) {
         self.url = url
         self.serviceName = serviceName
-        self.cookieDomain = cookieDomain
+        self.cookieDomains = cookieDomains
         self.requiredCookie = requiredCookie
         self.save = save
         self.onSignedIn = onSignedIn
@@ -108,7 +110,7 @@ struct WebLoginView: View {
     }
 
     private func finish() async {
-        guard let session = await model.readSession(domain: cookieDomain, requiredCookie: requiredCookie) else {
+        guard let session = await model.readSession(domains: cookieDomains, requiredCookie: requiredCookie) else {
             problem = "Sign in to \(serviceName) first."
             return
         }

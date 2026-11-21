@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var confirmsAnalyzeAgain = false
     @State private var instagramSignedIn = InstagramSessionStore.shared.load()?.isUsable(requiredCookie: "sessionid") ?? false
     @State private var showsInstagramLogin = false
+    @State private var xSignedIn = WebSessionStore.x.load()?.isUsable(requiredCookie: "auth_token") ?? false
+    @State private var showsXLogin = false
     @AppStorage(AnalysisSettings.enabledKey) private var analyzeDocuments = AnalysisSettings.defaultEnabled
     @AppStorage(AnalysisSettings.tagModeKey) private var tagMode = AnalysisSettings.defaultTagMode.rawValue
     @AppStorage(TrashSettings.autoEmptyKey) private var trashAutoEmpty = TrashSettings.defaultAutoEmpty
@@ -48,6 +50,25 @@ struct SettingsView: View {
                     Text("Instagram")
                 } footer: {
                     Text("Private posts need a signed-in session. The cookies stay in the keychain; Instagram’s terms apply.")
+                }
+                Section {
+                    if xSignedIn {
+                        LabeledContent("X", value: "Connected")
+                        Button("Sign out", role: .destructive) {
+                            WebSessionStore.x.clear()
+                            xSignedIn = false
+                            Task {
+                                await WebLoginModel.clearWebCookies(domain: "x.com")
+                                await WebLoginModel.clearWebCookies(domain: "twitter.com")
+                            }
+                        }
+                    } else {
+                        Button("Connect X") { showsXLogin = true }
+                    }
+                } header: {
+                    Text("X")
+                } footer: {
+                    Text("Private or protected posts need a signed-in session. The cookies stay in the keychain; X’s terms apply.")
                 }
                 Section {
                     Button {
@@ -135,6 +156,9 @@ struct SettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showsInstagramLogin) {
                 InstagramLoginView { instagramSignedIn = true }
+            }
+            .sheet(isPresented: $showsXLogin) {
+                XLoginView { xSignedIn = true }
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

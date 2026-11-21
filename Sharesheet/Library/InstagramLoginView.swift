@@ -8,7 +8,7 @@ struct InstagramLoginView: View {
         WebLoginView(
             url: URL(string: "https://www.instagram.com/accounts/login/")!,
             serviceName: "Instagram",
-            cookieDomain: "instagram.com",
+            cookieDomains: ["instagram.com"],
             requiredCookie: "sessionid",
             save: { InstagramSessionStore.shared.save($0) },
             onSignedIn: onSignedIn)

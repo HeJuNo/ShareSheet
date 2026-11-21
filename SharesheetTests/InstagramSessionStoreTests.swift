@@ -49,4 +49,20 @@ struct InstagramSessionStoreTests {
     @Test @MainActor func loginUsesANonPersistentWebStore() {
         #expect(!InstagramLoginModel.makeConfiguration().websiteDataStore.isPersistent)
     }
+
+    @Test func roundTripsTheXService() {
+        let store = WebSessionStore(service: "test-x-\(UUID().uuidString)", account: "x")
+        defer { store.clear() }
+        let session = InstagramSession(cookies: [
+            .init(name: "auth_token", value: "a", domain: ".x.com", path: "/"),
+        ])
+        let status = store.saveStatus(session)
+        if status == errSecMissingEntitlement { return }
+        #expect(status == errSecSuccess, "Keychain save failed with status \(status)")
+        guard status == errSecSuccess else { return }
+
+        #expect(store.load() == session)
+        store.clear()
+        #expect(store.load() == nil)
+    }
 }
