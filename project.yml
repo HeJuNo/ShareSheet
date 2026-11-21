@@ -47,6 +47,8 @@ targets:
         product: SharesheetUI
       - package: SharesheetKit
         product: InstagramMedia
+      - package: SharesheetKit
+        product: XMedia
       - package: ZenUniffi
         product: ZenUniffi
       - target: SharesheetShare
@@ -217,6 +219,8 @@ targets:
       - target: Sharesheet
       - package: SharesheetKit
         product: InstagramMedia
+      - package: SharesheetKit
+        product: XMedia
       - package: ZenUniffi
         product: ZenUniffi
     settings:
