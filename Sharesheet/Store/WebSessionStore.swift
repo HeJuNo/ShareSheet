@@ -2,13 +2,18 @@ import Foundation
 import InstagramMedia
 import Security
 
-/// The Instagram web session in the keychain. Never log the stored data.
-struct InstagramSessionStore: Sendable {
-    static let shared = InstagramSessionStore(
+/// A web session in the keychain. Never log the stored data.
+struct WebSessionStore: Sendable {
+    static let shared = WebSessionStore(
         service: "\(Bundle.main.bundleIdentifier ?? "Sharesheet").instagram-session")
 
     let service: String
-    private let account = "instagram"
+    private let account: String
+
+    init(service: String, account: String = "instagram") {
+        self.service = service
+        self.account = account
+    }
 
     func load() -> InstagramSession? {
         var query = baseQuery
@@ -48,3 +53,6 @@ struct InstagramSessionStore: Sendable {
         ]
     }
 }
+
+/// Instagram keeps its session in the shared store under the Instagram service.
+typealias InstagramSessionStore = WebSessionStore

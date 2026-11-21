@@ -8,7 +8,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isRebuilding = false
     @State private var confirmsAnalyzeAgain = false
-    @State private var instagramSignedIn = InstagramSessionStore.shared.load()?.isUsable ?? false
+    @State private var instagramSignedIn = InstagramSessionStore.shared.load()?.isUsable(requiredCookie: "sessionid") ?? false
     @State private var showsInstagramLogin = false
     @AppStorage(AnalysisSettings.enabledKey) private var analyzeDocuments = AnalysisSettings.defaultEnabled
     @AppStorage(AnalysisSettings.tagModeKey) private var tagMode = AnalysisSettings.defaultTagMode.rawValue
@@ -39,7 +39,7 @@ struct SettingsView: View {
                         Button("Sign out", role: .destructive) {
                             InstagramSessionStore.shared.clear()
                             instagramSignedIn = false
-                            Task { await InstagramLoginModel.clearWebCookies() }
+                            Task { await WebLoginModel.clearWebCookies(domain: "instagram.com") }
                         }
                     } else {
                         Button("Connect Instagram") { showsInstagramLogin = true }

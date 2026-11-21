@@ -43,7 +43,7 @@ struct InstagramSessionStoreTests {
         ])
 
         #expect(store.save(expired))
-        #expect(store.load()?.isUsable == false)
+        #expect(store.load()?.isUsable(requiredCookie: "sessionid") == false)
     }
 
     @Test @MainActor func loginUsesANonPersistentWebStore() {

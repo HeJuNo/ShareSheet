@@ -7,15 +7,7 @@ public struct InstagramMediaLoader: Sendable {
     /// Receives a Markdown report on any failed or partial download; nil disables reporting.
     public typealias Diagnostics = @Sendable (String) async -> Void
 
-    public struct Download: Equatable, Sendable {
-        public var files: [URL]
-        public var caption: String?
-
-        public init(files: [URL], caption: String? = nil) {
-            self.files = files
-            self.caption = caption
-        }
-    }
+    public typealias Download = MediaDownload
 
     public struct Limits: Sendable {
         public var maxItems: Int
@@ -115,7 +107,7 @@ public struct InstagramMediaLoader: Sendable {
         var anonymousFailure = anonymousFailure
         let storedSession = sessionProvider?()
 
-        if media.isEmpty, let session = storedSession, session.isUsable {
+        if media.isEmpty, let session = storedSession, session.isUsable(requiredCookie: "sessionid") {
             do {
                 let signed = try await signedInMedia(shortcode: shortcode, session: session)
                 media = signed.media
@@ -132,7 +124,7 @@ public struct InstagramMediaLoader: Sendable {
             }
         }
 
-        if media.isEmpty, let storedSession, !storedSession.isUsable {
+        if media.isEmpty, let storedSession, !storedSession.isUsable(requiredCookie: "sessionid") {
             anonymousFailure = AnonymousFailure(
                 stage: anonymousFailure?.stage ?? "read media list",
                 detail: [anonymousFailure?.detail, "the stored Instagram session has expired"]
@@ -207,7 +199,7 @@ public struct InstagramMediaLoader: Sendable {
         var request = URLRequest(url: url)
         request.timeoutInterval = limits.fileTimeout
         request.setValue(session.cookieHeader, forHTTPHeaderField: "Cookie")
-        if let csrf = session.csrfToken { request.setValue(csrf, forHTTPHeaderField: "X-CSRFToken") }
+        if let csrf = session.value(named: "csrftoken") { request.setValue(csrf, forHTTPHeaderField: "X-CSRFToken") }
         request.setValue("936619743392459", forHTTPHeaderField: "X-IG-App-ID")
         request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
         request.setValue("https://www.instagram.com/p/\(shortcode)/", forHTTPHeaderField: "Referer")
