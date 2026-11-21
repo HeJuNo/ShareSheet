@@ -62,4 +62,9 @@ extension WebSessionStore {
     static let x = WebSessionStore(
         service: "\(Bundle.main.bundleIdentifier ?? "Sharesheet").x-session",
         account: "x")
+
+    /// Facebook's own keychain entry; `c_user` marks a signed-in session.
+    static let facebook = WebSessionStore(
+        service: "\(Bundle.main.bundleIdentifier ?? "Sharesheet").facebook-session",
+        account: "facebook")
 }

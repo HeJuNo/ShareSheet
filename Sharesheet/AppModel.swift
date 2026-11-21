@@ -1,3 +1,4 @@
+import FacebookMedia
 import Foundation
 import InstagramMedia
 import Observation
@@ -756,12 +757,16 @@ extension AppModel {
         let spotifyMedia = SpotifyMediaLoader(
             fetcher: fetcher,
             diagnostics: { report in await Self.writeMediaDiagnostic(report, prefix: "spotify-media") })
+        let facebookMedia = FacebookMediaLoader(
+            diagnostics: { report in await Self.writeMediaDiagnostic(report, prefix: "facebook-media") },
+            session: { WebSessionStore.facebook.load() })
         let socialMedia: @Sendable (URL) async -> MediaDownload? = { url in
             switch SocialEmbed.platform(of: url) {
             case .instagram: await instagramMedia.download(for: url)
             case .x: await xMedia.download(for: url)
             case .spotify: await spotifyMedia.download(for: url)
-            default: nil
+            case .facebook: await facebookMedia.download(for: url)
+            case nil: nil
             }
         }
         let runner = CaptureRunner(

@@ -153,43 +153,58 @@ struct SettingsView: View {
         }
     }
 
-    /// The whole row is the control, so its target is at least 44 pt; narrow widths stack the action below.
+    /// One row per service, like Apple's account lists: a status and a chevron; the action lives on its own page.
     private func accountRow(_ service: AccountService) -> some View {
         let connected = signedIn[service] == true
-        return Button {
-            if connected {
-                confirmingSignOut = service
-            } else {
-                loginService = service
-            }
+        return NavigationLink {
+            AccountDetailView(
+                service: service,
+                connected: Binding(
+                    get: { signedIn[service] == true },
+                    set: { signedIn[service] = $0 }),
+                connect: { loginService = service },
+                signOut: { confirmingSignOut = service })
         } label: {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
+            HStack {
+                Text(service.name)
+                Spacer()
+                Text(connected ? "Connected" : "Not connected")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// A service's own page: status on top, the destructive action on its own row.
+    private struct AccountDetailView: View {
+        let service: AccountService
+        @Binding var connected: Bool
+        let connect: () -> Void
+        let signOut: () -> Void
+
+        var body: some View {
+            Form {
+                Section {
+                    LabeledContent("Status") {
+                        Text(connected ? "Connected" : "Not connected")
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
                     Text(service.name)
-                    Spacer(minLength: 8)
-                    if connected {
-                        Text("Connected").foregroundStyle(.secondary)
-                        Text("Sign out").foregroundStyle(.red)
-                    } else {
-                        Text("Connect").foregroundStyle(Color.accentColor)
-                    }
+                } footer: {
+                    Text("Private or protected posts need a signed-in session. The cookies stay in the keychain; the service’s terms apply.")
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(service.name)
-                        Spacer(minLength: 8)
-                        if connected { Text("Connected").foregroundStyle(.secondary) }
+                Section {
+                    if connected {
+                        Button("Sign out", role: .destructive, action: signOut)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    } else {
+                        Button("Connect \(service.name)", action: connect)
                     }
-                    Text(connected ? "Sign out" : "Connect")
-                        .foregroundStyle(connected ? Color.red : Color.accentColor)
                 }
             }
-            .frame(minHeight: 44, alignment: .leading)
-            .contentShape(Rectangle())
+            .navigationTitle(service.name)
+            .navigationBarTitleDisplayMode(.inline)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text(connected ? "Sign out of \(service.name)" : "Connect \(service.name)"))
-        .accessibilityValue(Text(connected ? "Connected" : "Not connected"))
     }
 
     private func signOut(_ service: AccountService) {
@@ -204,7 +219,7 @@ struct SettingsView: View {
 
     /// A login service: its keychain entry, the cookies that mean "signed in", and its web sheet.
     private enum AccountService: String, CaseIterable, Identifiable {
-        case instagram, x
+        case instagram, x, facebook
 
         var id: String { rawValue }
 
@@ -212,6 +227,7 @@ struct SettingsView: View {
             switch self {
             case .instagram: "Instagram"
             case .x: "X"
+            case .facebook: "Facebook"
             }
         }
 
@@ -219,6 +235,7 @@ struct SettingsView: View {
             switch self {
             case .instagram: "sessionid"
             case .x: "auth_token"
+            case .facebook: "c_user"
             }
         }
 
@@ -226,6 +243,7 @@ struct SettingsView: View {
             switch self {
             case .instagram: ["instagram.com"]
             case .x: ["x.com", "twitter.com"]
+            case .facebook: ["facebook.com"]
             }
         }
 
@@ -233,6 +251,7 @@ struct SettingsView: View {
             switch self {
             case .instagram: InstagramSessionStore.shared
             case .x: WebSessionStore.x
+            case .facebook: WebSessionStore.facebook
             }
         }
 
@@ -242,6 +261,7 @@ struct SettingsView: View {
             switch self {
             case .instagram: InstagramLoginView(onSignedIn: onSignedIn)
             case .x: XLoginView(onSignedIn: onSignedIn)
+            case .facebook: FacebookLoginView(onSignedIn: onSignedIn)
             }
         }
     }

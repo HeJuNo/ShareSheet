@@ -562,7 +562,7 @@ struct ItemDetailView: View {
         case .instagram: return InstagramPost.shortcode(in: url) != nil
         case .x: return XTweetID.string(from: url) != nil
         case .spotify: return SpotifyTrackID.string(from: url) != nil
-        case .facebook: return false
+        case .facebook: return true
         }
     }
 

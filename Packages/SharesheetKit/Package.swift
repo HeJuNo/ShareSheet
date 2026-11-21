@@ -10,6 +10,7 @@ let package = Package(
         .library(name: "InstagramMedia", targets: ["InstagramMedia"]),
         .library(name: "XMedia", targets: ["XMedia"]),
         .library(name: "SpotifyMedia", targets: ["SpotifyMedia"]),
+        .library(name: "FacebookMedia", targets: ["FacebookMedia"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", from: "7.12.0"),
@@ -29,6 +30,9 @@ let package = Package(
             name: "XMedia",
             dependencies: ["SharesheetCore", .product(name: "SwiftSoup", package: "SwiftSoup")]),
         .target(name: "SpotifyMedia", dependencies: ["SharesheetCore"]),
+        .target(
+            name: "FacebookMedia",
+            dependencies: ["SharesheetCore", .product(name: "SwiftSoup", package: "SwiftSoup")]),
         .testTarget(
             name: "SharesheetCoreTests",
             dependencies: ["SharesheetCore", .product(name: "GRDB", package: "GRDB.swift")]),
@@ -41,5 +45,8 @@ let package = Package(
         .testTarget(
             name: "SpotifyMediaTests",
             dependencies: ["SpotifyMedia", "SharesheetCore"]),
+        .testTarget(
+            name: "FacebookMediaTests",
+            dependencies: ["FacebookMedia", "SharesheetCore"]),
     ]
 )
