@@ -283,7 +283,14 @@ actor CaptureRunner {
             from: download.files, preferredNames: names, to: id,
             update: { item, paths in
                 item.media = paths
-                if let caption, (item.description ?? "").isEmpty { item.description = caption }
+                if let caption {
+                    if SocialEmbed.platform(of: postURL) == .spotify {
+                        // A song's caption is its name and artists; that reads better as the title.
+                        if !item.titleManual { item.title = caption }
+                    } else if (item.description ?? "").isEmpty {
+                        item.description = caption
+                    }
+                }
             }
         ) else { return false }
         try? index.upsert(saved)

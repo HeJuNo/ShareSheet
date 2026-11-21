@@ -11,15 +11,23 @@ public enum SocialEmbed {
     public struct Response: Decodable, Equatable, Sendable {
         public var html: String
         public var authorName: String?
+        public var title: String?
+        public var thumbnailURL: URL?
 
-        public init(html: String, authorName: String? = nil) {
+        public init(
+            html: String, authorName: String? = nil, title: String? = nil, thumbnailURL: URL? = nil
+        ) {
             self.html = html
             self.authorName = authorName
+            self.title = title
+            self.thumbnailURL = thumbnailURL
         }
 
         private enum CodingKeys: String, CodingKey {
             case html
             case authorName = "author_name"
+            case title
+            case thumbnailURL = "thumbnail_url"
         }
     }
 
@@ -70,6 +78,7 @@ public enum SocialEmbed {
 
     /// A phone-sized page around the embed markup, with the platform's script that turns it into the post.
     public static func page(for response: Response, platform: Platform) -> String {
+        if platform == .spotify, let card = spotifyCard(for: response) { return card }
         let script: String
         switch platform {
         case .x: script = #"<script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>"#
@@ -90,6 +99,43 @@ public enum SocialEmbed {
             </body>
             </html>
             """
+    }
+
+    /// Spotify's oEmbed iframe stays blank in a snapshot, so the capture shows the track's own card instead.
+    private static func spotifyCard(for response: Response) -> String? {
+        guard let title = response.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty
+        else { return nil }
+        let cover = response.thumbnailURL.flatMap { url -> String? in
+            guard url.scheme?.lowercased() == "https" else { return nil }
+            return "<img src=\"\(escape(url.absoluteString))\" alt=\"\" "
+                + "style=\"width:120px;height:120px;border-radius:8px;object-fit:cover;flex:none\">"
+        } ?? ""
+        return """
+            <!DOCTYPE html>
+            <html>
+            <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>body { margin: 0; padding: 12px; background: #fff; }</style>
+            </head>
+            <body>
+            <div style="display:flex;gap:16px;align-items:center;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
+            \(cover)
+            <div style="min-width:0">
+            <div style="font-size:20px;font-weight:600;color:#111;line-height:1.3">\(escape(title))</div>
+            <div style="font-size:14px;color:#666;margin-top:4px">Spotify</div>
+            </div>
+            </div>
+            </body>
+            </html>
+            """
+    }
+
+    private static func escape(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
     /// The post text carried in the embed markup (X sends the full text), nil when there is none.

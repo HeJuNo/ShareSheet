@@ -1,4 +1,5 @@
 import AVKit
+import Combine
 import InstagramMedia
 import QuickLook
 import QuickLookThumbnailing
@@ -153,7 +154,13 @@ struct ItemDetailView: View {
             Button("OK") { if failure.leavesScreen { dismiss() } }
         } message: { failure in
             switch failure {
-            case .media: Text("For private posts, connect Instagram or X in Settings.")
+            case .media:
+                if let url = item?.url, let platform = SocialEmbed.platform(of: url),
+                   platform == .instagram || platform == .x {
+                    Text("For private posts, connect Instagram or X in Settings.")
+                } else {
+                    Text("The media could not be loaded.")
+                }
             default: Text(verbatim: item?.title ?? "")
             }
         }
@@ -588,8 +595,9 @@ private struct MediaStrip: View {
                 .foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
+                    let cover = paths.first { MediaThumbnail.isImage($0) }
                     ForEach(paths.indices, id: \.self) { index in
-                        MediaThumbnail(relativePath: paths[index]) { open(index) }
+                        MediaThumbnail(relativePath: paths[index], coverPath: cover) { open(index) }
                     }
                 }
             }
@@ -600,6 +608,8 @@ private struct MediaStrip: View {
 
 private struct MediaThumbnail: View {
     let relativePath: String
+    /// An audio file shows the post's cover instead of Quick Look's white audio icon.
+    let coverPath: String?
     let open: () -> Void
     @Environment(AppModel.self) private var model
     @Environment(\.displayScale) private var displayScale
@@ -610,6 +620,14 @@ private struct MediaThumbnail: View {
 
     private var isVideo: Bool {
         ["mp4", "mov", "m4v"].contains((relativePath as NSString).pathExtension.lowercased())
+    }
+
+    private var isAudio: Bool {
+        ["mp3", "m4a", "aac", "wav", "caf"].contains((relativePath as NSString).pathExtension.lowercased())
+    }
+
+    static func isImage(_ path: String) -> Bool {
+        ["jpg", "jpeg", "png", "heic", "webp"].contains((path as NSString).pathExtension.lowercased())
     }
 
     var body: some View {
@@ -629,6 +647,12 @@ private struct MediaThumbnail: View {
                         .font(.largeTitle)
                         .foregroundStyle(.white)
                         .shadow(radius: 3)
+                } else if isAudio {
+                    Image(systemName: "music.note")
+                        .font(.headline)
+                        .padding(6)
+                        .background(.black.opacity(0.55), in: Circle())
+                        .foregroundStyle(.white)
                 }
             }
             .frame(width: Self.size, height: Self.size)
@@ -640,9 +664,14 @@ private struct MediaThumbnail: View {
         .accessibilityLabel(Text((relativePath as NSString).lastPathComponent))
         .task(id: relativePath) {
             url = await model.attachmentURL(relativePath)
-            guard let url else { return }
+            let source = if isAudio, let coverPath, coverPath != relativePath {
+                await model.attachmentURL(coverPath)
+            } else {
+                url
+            }
+            guard let source else { return }
             let request = QLThumbnailGenerator.Request(
-                fileAt: url, size: CGSize(width: Self.size, height: Self.size), scale: displayScale,
+                fileAt: source, size: CGSize(width: Self.size, height: Self.size), scale: displayScale,
                 representationTypes: .thumbnail)
             thumbnail = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).uiImage
         }
@@ -703,9 +732,21 @@ private struct MediaPreviewPage: View {
         ["mp4", "mov", "m4v"].contains((relativePath as NSString).pathExtension.lowercased())
     }
 
+    private var isAudio: Bool {
+        ["mp3", "m4a", "aac", "wav", "caf"].contains((relativePath as NSString).pathExtension.lowercased())
+    }
+
     var body: some View {
         Group {
-            if isVideo {
+            if isAudio {
+                if let url {
+                    AudioPreviewPage(url: url, isSelected: isSelected)
+                } else if missing {
+                    ContentUnavailableView("File missing", systemImage: "photo")
+                } else {
+                    ProgressView().tint(.white)
+                }
+            } else if isVideo {
                 if let player {
                     VideoPlayer(player: player)
                 } else if missing {
@@ -740,10 +781,51 @@ private struct MediaPreviewPage: View {
             }
             if isVideo {
                 if player == nil { player = AVPlayer(url: url) }
-            } else if image == nil {
+            } else if !isAudio, image == nil {
                 image = UIImage(contentsOfFile: url.path)
                 missing = image == nil
             }
+        }
+        .onDisappear { player?.pause() }
+    }
+}
+
+/// An audio clip gets its own transport: a black video page would show no controls.
+private struct AudioPreviewPage: View {
+    let url: URL
+    let isSelected: Bool
+    @State private var player: AVPlayer?
+    @State private var isPlaying = false
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "music.note")
+                .font(.system(size: 64))
+                .foregroundStyle(.secondary)
+            Button {
+                guard let player else { return }
+                if isPlaying { player.pause() } else { player.play() }
+                isPlaying.toggle()
+            } label: {
+                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 72))
+                    .foregroundStyle(.white)
+            }
+            .accessibilityLabel(isPlaying ? "Pause" : "Play")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: isSelected) {
+            guard isSelected else {
+                player?.pause()
+                isPlaying = false
+                return
+            }
+            if player == nil { player = AVPlayer(url: url) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)) { note in
+            guard (note.object as? AVPlayerItem) === player?.currentItem else { return }
+            isPlaying = false
+            player?.seek(to: .zero)
         }
         .onDisappear { player?.pause() }
     }

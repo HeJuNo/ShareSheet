@@ -73,6 +73,26 @@ struct SocialEmbedTests {
         #expect(SocialEmbed.text(of: response) == nil)
     }
 
+    @Test func spotifyPageShowsTheTrackCardInsteadOfAnEmptyFrame() throws {
+        let json = #"""
+        {"html":"<iframe src=\"https://open.spotify.com/embed/track/4cOdK2wGLETKBW3PvgPWqT\"></iframe>",
+         "title":"Why?","thumbnail_url":"https://image-cdn-fa.spotifycdn.com/image/cover"}
+        """#
+        let response = try SocialEmbed.decode(Data(json.utf8))
+        let page = SocialEmbed.page(for: response, platform: .spotify)
+        #expect(page.contains("https://image-cdn-fa.spotifycdn.com/image/cover"))
+        #expect(page.contains("Why?"))
+        #expect(!page.contains("<iframe"))
+    }
+
+    @Test func spotifyCardEscapesTheTitle() throws {
+        let response = SocialEmbed.Response(
+            html: "", title: "A <b> & \"B\"", thumbnailURL: URL(string: "https://image-cdn-fa.spotifycdn.com/i"))
+        let page = SocialEmbed.page(for: response, platform: .spotify)
+        #expect(page.contains("A &lt;b&gt; &amp; &quot;B&quot;"))
+        #expect(!page.contains("A <b> & \"B\""))
+    }
+
     @Test func pageWrapsMarkupWithThePlatformScript() {
         let response = SocialEmbed.Response(html: #"<blockquote class="twitter-tweet"><p>hi</p></blockquote>"#)
         let x = SocialEmbed.page(for: response, platform: .x)

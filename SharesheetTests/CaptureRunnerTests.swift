@@ -705,6 +705,39 @@ struct CaptureRunnerTests {
         #expect(saved.description == "X caption")
     }
 
+    @Test func loadingMediaForASpotifyTrackNamesTheItemAfterTheSong() async throws {
+        let env = try Env()
+        let item = try await env.makeItem(
+            "Why?", capture: .done, url: URL(string: "https://open.spotify.com/track/3uOMEgjFjz6NDEmdW7XVx2")!)
+        let folder = try makeTemporaryMediaFolder()
+        let runner = env.runner(FakeCapturer(), socialMedia: { _ in
+            .init(files: [folder.appending(path: "1.jpg")], caption: "Why? – Jestofunk, CeCe Rogers")
+        })
+
+        #expect(await runner.loadMedia(for: item.id))
+
+        let saved = try await env.store.item(item.id)
+        #expect(saved.title == "Why? – Jestofunk, CeCe Rogers")
+        #expect(saved.description == nil)
+    }
+
+    @Test func anEditedSpotifyTitleIsKept() async throws {
+        let env = try Env()
+        let item = try await env.makeItem(
+            "Mine", capture: .done, url: URL(string: "https://open.spotify.com/track/3uOMEgjFjz6NDEmdW7XVx2")!)
+        var edited = try await env.store.item(item.id)
+        edited.titleManual = true
+        _ = try await env.store.update(edited)
+        let folder = try makeTemporaryMediaFolder()
+        let runner = env.runner(FakeCapturer(), socialMedia: { _ in
+            .init(files: [folder.appending(path: "1.jpg")], caption: "Why? – Jestofunk, CeCe Rogers")
+        })
+
+        #expect(await runner.loadMedia(for: item.id))
+
+        #expect(try await env.store.item(item.id).title == "Mine")
+    }
+
     @Test func loadingMediaForANonInstagramPostDoesNothing() async throws {
         let env = try Env()
         let item = try await env.makeItem("plain", capture: .done)
