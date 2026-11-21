@@ -1,3 +1,4 @@
+import AVKit
 import QuickLook
 import QuickLookThumbnailing
 import SharesheetCore
@@ -81,6 +82,13 @@ struct ItemDetailView: View {
     /// The attachment open in Quick Look. Kept here rather than in the list row: presenting full screen
     /// takes the list out of the window, the row is rebuilt and would lose the state, closing the preview.
     @State private var previewURL: URL?
+    @State private var mediaPreview: MediaPreview?
+
+    private struct MediaPreview: Identifiable {
+        let id = UUID()
+        let urls: [URL]
+        let start: Int
+    }
 
     init(id: ItemID) {
         _id = State(initialValue: id)
@@ -121,6 +129,9 @@ struct ItemDetailView: View {
         }
         .quickLookPreview($previewURL)
         .onChange(of: previewURL) { _, url in if url == nil { OrientationGate.settle() } }
+        .fullScreenCover(item: $mediaPreview) { preview in
+            MediaPreviewView(urls: preview.urls, startIndex: preview.start)
+        }
         .sheet(isPresented: $editingField.isPresent()) {
             if let name = editingField, let value = item?.fields[name] {
                 FieldEditSheet(name: name, value: value) { new in Task { await setField(name, new) } }
@@ -151,7 +162,7 @@ struct ItemDetailView: View {
                 header(item)
                     .listRowInsets(EdgeInsets())
                 if !item.media.isEmpty {
-                    MediaStrip(paths: item.media) { previewURL = $0 }
+                    MediaStrip(paths: item.media) { index in openMediaPreview(item, at: index) }
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
                 }
                 TextField("Title", text: titleBinding, axis: .vertical)
@@ -548,12 +559,26 @@ struct ItemDetailView: View {
         if let item = try? await model.loadItem(id) { merge(item, since: baseline) }
         if !loaded { failure = .media }
     }
+
+    private func openMediaPreview(_ item: Item, at index: Int) {
+        Task {
+            var urls: [URL] = []
+            var start = 0
+            for (position, path) in item.media.enumerated() {
+                guard let url = await model.attachmentURL(path) else { continue }
+                if position == index { start = urls.count }
+                urls.append(url)
+            }
+            guard !urls.isEmpty else { return }
+            mediaPreview = MediaPreview(urls: urls, start: start)
+        }
+    }
 }
 
-/// The downloaded images and videos of a post, in post order; tapping opens Quick Look.
+/// The downloaded images and videos of a post, in post order; tapping opens the swipeable viewer.
 private struct MediaStrip: View {
     let paths: [String]
-    let open: (URL) -> Void
+    let open: (Int) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -562,8 +587,8 @@ private struct MediaStrip: View {
                 .foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(paths, id: \.self) { path in
-                        MediaThumbnail(relativePath: path, open: open)
+                    ForEach(paths.indices, id: \.self) { index in
+                        MediaThumbnail(relativePath: paths[index]) { open(index) }
                     }
                 }
             }
@@ -574,7 +599,7 @@ private struct MediaStrip: View {
 
 private struct MediaThumbnail: View {
     let relativePath: String
-    let open: (URL) -> Void
+    let open: () -> Void
     @Environment(AppModel.self) private var model
     @Environment(\.displayScale) private var displayScale
     @State private var url: URL?
@@ -588,7 +613,7 @@ private struct MediaThumbnail: View {
 
     var body: some View {
         Button {
-            if let url { open(url) }
+            open()
         } label: {
             ZStack {
                 if let thumbnail {
@@ -620,6 +645,92 @@ private struct MediaThumbnail: View {
                 representationTypes: .thumbnail)
             thumbnail = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).uiImage
         }
+    }
+}
+
+/// Full-screen pager over the post's media; swipe left/right for the next/previous item.
+private struct MediaPreviewView: View {
+    let urls: [URL]
+    @Environment(\.dismiss) private var dismiss
+    @State private var selection: Int
+
+    init(urls: [URL], startIndex: Int) {
+        self.urls = urls
+        _selection = State(initialValue: startIndex)
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            TabView(selection: $selection) {
+                ForEach(urls.indices, id: \.self) { index in
+                    MediaPreviewPage(url: urls[index], isSelected: selection == index)
+                        .tag(index)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: urls.count > 1 ? .always : .never))
+            .indexViewStyle(.page(backgroundDisplayMode: .always))
+            .ignoresSafeArea()
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.headline)
+                    .padding(10)
+                    .background(.black.opacity(0.55), in: Circle())
+                    .foregroundStyle(.white)
+            }
+            .padding(16)
+            .accessibilityLabel(Text("Close"))
+        }
+        .preferredColorScheme(.dark)
+        .allowsLandscape()
+    }
+}
+
+private struct MediaPreviewPage: View {
+    let url: URL
+    let isSelected: Bool
+    @State private var player: AVPlayer?
+    @State private var image: UIImage?
+    @State private var missing = false
+
+    private var isVideo: Bool {
+        ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased())
+    }
+
+    var body: some View {
+        Group {
+            if isVideo {
+                if let player {
+                    VideoPlayer(player: player)
+                } else {
+                    ProgressView().tint(.white)
+                }
+            } else if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else if missing {
+                ContentUnavailableView("File missing", systemImage: "photo")
+            } else {
+                ProgressView().tint(.white)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: isSelected) {
+            guard isSelected else {
+                player?.pause()
+                return
+            }
+            if isVideo {
+                if player == nil { player = AVPlayer(url: url) }
+            } else if image == nil {
+                image = UIImage(contentsOfFile: url.path)
+                missing = image == nil
+            }
+        }
+        .onDisappear { player?.pause() }
     }
 }
 
