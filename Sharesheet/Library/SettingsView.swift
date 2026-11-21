@@ -8,10 +8,12 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isRebuilding = false
     @State private var confirmsAnalyzeAgain = false
-    @State private var instagramSignedIn = InstagramSessionStore.shared.load()?.isUsable(requiredCookie: "sessionid") ?? false
-    @State private var showsInstagramLogin = false
-    @State private var xSignedIn = WebSessionStore.x.load()?.isUsable(requiredCookie: "auth_token") ?? false
-    @State private var showsXLogin = false
+    @State private var signedIn = Dictionary(
+        uniqueKeysWithValues: AccountService.allCases.map {
+            ($0, $0.store.load()?.isUsable(requiredCookie: $0.requiredCookie) ?? false)
+        })
+    @State private var loginService: AccountService?
+    @State private var confirmingSignOut: AccountService?
     @AppStorage(AnalysisSettings.enabledKey) private var analyzeDocuments = AnalysisSettings.defaultEnabled
     @AppStorage(AnalysisSettings.tagModeKey) private var tagMode = AnalysisSettings.defaultTagMode.rawValue
     @AppStorage(TrashSettings.autoEmptyKey) private var trashAutoEmpty = TrashSettings.defaultAutoEmpty
@@ -36,25 +38,9 @@ struct SettingsView: View {
                     }
                 }
                 Section {
-                    accountRow(
-                        "Instagram", signedIn: instagramSignedIn,
-                        connect: { showsInstagramLogin = true },
-                        signOut: {
-                            InstagramSessionStore.shared.clear()
-                            instagramSignedIn = false
-                            Task { await WebLoginModel.clearWebCookies(domain: "instagram.com") }
-                        })
-                    accountRow(
-                        "X", signedIn: xSignedIn,
-                        connect: { showsXLogin = true },
-                        signOut: {
-                            WebSessionStore.x.clear()
-                            xSignedIn = false
-                            Task {
-                                await WebLoginModel.clearWebCookies(domain: "x.com")
-                                await WebLoginModel.clearWebCookies(domain: "twitter.com")
-                            }
-                        })
+                    ForEach(AccountService.allCases) { service in
+                        accountRow(service)
+                    }
                 } header: {
                     Text("Accounts")
                 } footer: {
@@ -144,11 +130,20 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showsInstagramLogin) {
-                InstagramLoginView { instagramSignedIn = true }
+            .sheet(item: $loginService) { service in
+                service.loginView { signedIn[service] = true }
             }
-            .sheet(isPresented: $showsXLogin) {
-                XLoginView { xSignedIn = true }
+            .confirmationDialog(
+                "Sign out of \(confirmingSignOut?.name ?? "")?",
+                isPresented: $confirmingSignOut.isPresent(),
+                titleVisibility: .visible
+            ) {
+                Button("Sign out", role: .destructive) {
+                    if let service = confirmingSignOut { signOut(service) }
+                }
+                Button("Cancel", role: .cancel) { confirmingSignOut = nil }
+            } message: {
+                Text("Private posts need the session; you will have to sign in again.")
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -158,21 +153,95 @@ struct SettingsView: View {
         }
     }
 
-    /// One row per service; another login is one more call to this row.
-    private func accountRow(
-        _ name: String, signedIn: Bool, connect: @escaping () -> Void, signOut: @escaping () -> Void
-    ) -> some View {
-        HStack {
-            Text(name)
-            Spacer()
-            if signedIn {
-                Text("Connected")
-                    .foregroundStyle(.secondary)
-                Button("Sign out", role: .destructive, action: signOut)
-                    .accessibilityLabel(Text("Sign out of \(name)"))
+    /// The whole row is the control, so its target is at least 44 pt; narrow widths stack the action below.
+    private func accountRow(_ service: AccountService) -> some View {
+        let connected = signedIn[service] == true
+        return Button {
+            if connected {
+                confirmingSignOut = service
             } else {
-                Button("Connect", action: connect)
-                    .accessibilityLabel(Text("Connect \(name)"))
+                loginService = service
+            }
+        } label: {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    Text(service.name)
+                    Spacer(minLength: 8)
+                    if connected {
+                        Text("Connected").foregroundStyle(.secondary)
+                        Text("Sign out").foregroundStyle(.red)
+                    } else {
+                        Text("Connect").foregroundStyle(Color.accentColor)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(service.name)
+                        Spacer(minLength: 8)
+                        if connected { Text("Connected").foregroundStyle(.secondary) }
+                    }
+                    Text(connected ? "Sign out" : "Connect")
+                        .foregroundStyle(connected ? Color.red : Color.accentColor)
+                }
+            }
+            .frame(minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(connected ? "Sign out of \(service.name)" : "Connect \(service.name)"))
+        .accessibilityValue(Text(connected ? "Connected" : "Not connected"))
+    }
+
+    private func signOut(_ service: AccountService) {
+        service.store.clear()
+        signedIn[service] = false
+        Task {
+            for domain in service.cookieDomains {
+                await WebLoginModel.clearWebCookies(domain: domain)
+            }
+        }
+    }
+
+    /// A login service: its keychain entry, the cookies that mean "signed in", and its web sheet.
+    private enum AccountService: String, CaseIterable, Identifiable {
+        case instagram, x
+
+        var id: String { rawValue }
+
+        var name: String {
+            switch self {
+            case .instagram: "Instagram"
+            case .x: "X"
+            }
+        }
+
+        var requiredCookie: String {
+            switch self {
+            case .instagram: "sessionid"
+            case .x: "auth_token"
+            }
+        }
+
+        var cookieDomains: [String] {
+            switch self {
+            case .instagram: ["instagram.com"]
+            case .x: ["x.com", "twitter.com"]
+            }
+        }
+
+        var store: WebSessionStore {
+            switch self {
+            case .instagram: InstagramSessionStore.shared
+            case .x: WebSessionStore.x
+            }
+        }
+
+        @MainActor
+        @ViewBuilder
+        func loginView(onSignedIn: @escaping () -> Void) -> some View {
+            switch self {
+            case .instagram: InstagramLoginView(onSignedIn: onSignedIn)
+            case .x: XLoginView(onSignedIn: onSignedIn)
             }
         }
     }
