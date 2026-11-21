@@ -4,7 +4,7 @@ import Foundation
 /// endpoints serve public posts without an account: the embed markup is rendered and captured instead.
 public enum SocialEmbed {
     public enum Platform: String, Sendable {
-        case x, instagram, facebook
+        case x, instagram, facebook, spotify
     }
 
     /// The fields of an oEmbed response this app uses.
@@ -32,6 +32,7 @@ public enum SocialEmbed {
         case "x.com", "twitter.com": return url.path().contains("/status/") ? .x : nil
         case "instagram.com": return .instagram
         case "facebook.com", "fb.watch", "fb.com": return .facebook
+        case "open.spotify.com": return url.path().contains("/track/") ? .spotify : nil
         default: return nil
         }
     }
@@ -49,6 +50,8 @@ public enum SocialEmbed {
             base = "https://graph.facebook.com/v25.0/instagram_oembed"
         case .facebook:
             base = "https://graph.facebook.com/v25.0/" + (isFacebookVideo(url) ? "oembed_video" : "oembed_post")
+        case .spotify:
+            base = "https://open.spotify.com/oembed"
         }
         var components = URLComponents(string: base)
         components?.queryItems = query
@@ -70,8 +73,8 @@ public enum SocialEmbed {
         let script: String
         switch platform {
         case .x: script = #"<script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>"#
-        // Instagram's and Facebook's markup bring their own script.
-        case .instagram, .facebook: script = ""
+        // Instagram's, Facebook's and Spotify's markup bring their own script.
+        case .instagram, .facebook, .spotify: script = ""
         }
         return """
             <!DOCTYPE html>

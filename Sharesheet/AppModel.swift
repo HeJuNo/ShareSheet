@@ -3,6 +3,7 @@ import InstagramMedia
 import Observation
 import OSLog
 import SharesheetCore
+import SpotifyMedia
 import UIKit
 import XMedia
 
@@ -752,10 +753,14 @@ extension AppModel {
             fetcher: fetcher,
             diagnostics: { report in await Self.writeMediaDiagnostic(report, prefix: "x-media") },
             session: { WebSessionStore.x.load() })
+        let spotifyMedia = SpotifyMediaLoader(
+            fetcher: fetcher,
+            diagnostics: { report in await Self.writeMediaDiagnostic(report, prefix: "spotify-media") })
         let socialMedia: @Sendable (URL) async -> MediaDownload? = { url in
             switch SocialEmbed.platform(of: url) {
             case .instagram: await instagramMedia.download(for: url)
             case .x: await xMedia.download(for: url)
+            case .spotify: await spotifyMedia.download(for: url)
             default: nil
             }
         }

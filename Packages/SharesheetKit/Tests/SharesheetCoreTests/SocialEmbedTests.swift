@@ -10,12 +10,17 @@ struct SocialEmbedTests {
         ("https://www.facebook.com/somepage/posts/123", .facebook),
         ("https://m.facebook.com/watch/?v=1", .facebook),
         ("https://fb.watch/abc/", .facebook),
+        ("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT?si=abc", .spotify),
+        ("https://open.spotify.com/intl-de/track/4cOdK2wGLETKBW3PvgPWqT", .spotify),
     ])
     func recognisesSupportedPosts(link: String, platform: SocialEmbed.Platform) {
         #expect(SocialEmbed.platform(of: URL(string: link)!) == platform)
     }
 
-    @Test(arguments: ["https://x.com/imryven", "https://example.com/x.com/status/1", "ftp://x.com/a/status/1"])
+    @Test(arguments: [
+        "https://x.com/imryven", "https://example.com/x.com/status/1", "ftp://x.com/a/status/1",
+        "https://open.spotify.com/album/4cOdK2wGLETKBW3PvgPWqT",
+    ])
     func ignoresOtherLinks(link: String) {
         #expect(SocialEmbed.platform(of: URL(string: link)!) == nil)
         #expect(SocialEmbed.endpoint(for: URL(string: link)!) == nil)
@@ -36,6 +41,15 @@ struct SocialEmbedTests {
         let post = try #require(SocialEmbed.endpoint(for: URL(string: "https://www.facebook.com/page/posts/42")!))
         #expect(video.path() == "/v25.0/oembed_video")
         #expect(post.path() == "/v25.0/oembed_post")
+    }
+
+    @Test func spotifyUsesItsOEmbedEndpoint() throws {
+        let endpoint = try #require(
+            SocialEmbed.endpoint(for: URL(string: "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT")!))
+        let components = try #require(URLComponents(url: endpoint, resolvingAgainstBaseURL: false))
+        #expect(components.host == "open.spotify.com")
+        #expect(components.path == "/oembed")
+        #expect(components.queryItems?.first?.value == "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT")
     }
 
     @Test func onlyFacebookShareLinksNeedResolving() {

@@ -49,6 +49,8 @@ targets:
         product: InstagramMedia
       - package: SharesheetKit
         product: XMedia
+      - package: SharesheetKit
+        product: SpotifyMedia
       - package: ZenUniffi
         product: ZenUniffi
       - target: SharesheetShare

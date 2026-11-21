@@ -4,6 +4,7 @@ import QuickLook
 import QuickLookThumbnailing
 import SharesheetCore
 import SharesheetUI
+import SpotifyMedia
 import SwiftUI
 import XMedia
 
@@ -555,6 +556,7 @@ struct ItemDetailView: View {
         switch platform {
         case .instagram: return InstagramPost.shortcode(in: url) != nil
         case .x: return XTweetID.string(from: url) != nil
+        case .spotify: return SpotifyTrackID.string(from: url) != nil
         case .facebook: return false
         }
     }
