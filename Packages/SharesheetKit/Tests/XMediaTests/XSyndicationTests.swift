@@ -20,23 +20,34 @@ struct XSyndicationTests {
         #expect(result.caption == "Hello world")
     }
 
-    @Test func readsMultiplePhotos() throws {
+    @Test func readsMultiplePhotosAtLargeSize() throws {
         let json = #"""
-        {"text":" pics ","photos":[{"url":"https://pbs.twimg.com/media/A.jpg"},{"url":"https://pbs.twimg.com/media/B.jpg"}]}
+        {"text":" pics ","photos":[{"url":"https://pbs.twimg.com/media/A.jpg"},{"url":"https://pbs.twimg.com/media/B?format=webp&name=medium"}]}
         """#
         let result = try decode(json)
         #expect(result.media.map(\.url.absoluteString) == [
-            "https://pbs.twimg.com/media/A.jpg", "https://pbs.twimg.com/media/B.jpg",
+            "https://pbs.twimg.com/media/A?format=jpg&name=large",
+            "https://pbs.twimg.com/media/B?format=jpg&name=large",
         ])
         #expect(result.media.allSatisfy { $0.kind == .image })
         #expect(result.caption == "pics")
     }
 
-    @Test func readsAPhotoFromMediaDetails() throws {
+    @Test func readsAPhotoFromMediaDetailsAtLargeSize() throws {
         let json = #"""
         {"mediaDetails":[{"type":"photo","media_url_https":"https://pbs.twimg.com/media/C.jpg"}]}
         """#
-        #expect(try decode(json).media == [.init(kind: .image, url: URL(string: "https://pbs.twimg.com/media/C.jpg")!)])
+        #expect(try decode(json).media == [
+            .init(kind: .image, url: URL(string: "https://pbs.twimg.com/media/C?format=jpg&name=large")!),
+        ])
+    }
+
+    @Test func aVideoWithoutMP4IsNotSavedAsItsPoster() throws {
+        let json = #"""
+        {"mediaDetails":[{"type":"video","media_url_https":"https://pbs.twimg.com/ext_tw_video_thumb/1/p.jpg",
+         "video_info":{"variants":[{"content_type":"application/x-mpegURL","url":"https://video.twimg.com/x/pl.m3u8"}]}}]}
+        """#
+        #expect(try decode(json).media.isEmpty)
     }
 
     @Test func noMediaIsAnEmptyList() throws {

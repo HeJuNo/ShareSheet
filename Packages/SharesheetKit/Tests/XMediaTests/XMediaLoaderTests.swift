@@ -137,16 +137,17 @@ struct XMediaLoaderTests {
         let pageURL = "https://x.com/i/status/1111111111"
         let video = "https://video.twimg.com/amplify_video/111/vid/avc1/720x900/v.mp4"
         StubProtocol.serve(video, .init(body: Data("v".utf8)))
+        let record = #"""
+        {"data":{"tweet_result_by_rest_id":{"id":"x","rest_id":"1111111111","result":{
+        "rest_id":"1111111111","media_entities2":[{"type":"video",
+        "media_url_https":"https://pbs.twimg.com/amplify_video_thumb/111/img/p.jpg",
+        "video_info":{"variants":[{"content_type":"video/mp4","bitrate":1,"url":"\#(video)"}]}}],
+        "legacy":{"full_text":"Private post"}}}}}
+        """#
+        let escaped = String(decoding: try! JSONEncoder().encode(record), as: UTF8.self)
         StubProtocol.serve(pageURL, .init(
             headers: ["Content-Type": "text/html"],
-            body: Data(#"""
-            <html><head>
-            <meta property="og:description" content="Private post"/>
-            <meta property="og:image" content="https://pbs.twimg.com/amplify_video_thumb/111/img/p.jpg"/>
-            </head><body><script>{"v":"{\"video_info\":{\"variants\":[
-            {\"content_type\":\"video/mp4\",\"bitrate\":1,\"url\":\"\#(video)\"}
-            ]}}"}</script></body></html>
-            """#.utf8)))
+            body: Data(#"<html><body><script>value:\#(escaped)</script></body></html>"#.utf8)))
         let sink = ReportSink()
 
         let download = try #require(

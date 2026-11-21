@@ -31,16 +31,16 @@ public enum XSyndication {
                 }
                 if let best = videos.max(by: { $0.0 < $1.0 })?.1 {
                     items.append(.init(kind: .video, url: best))
-                    continue
                 }
+                continue // a video without an MP4 is not saved as its poster
             }
-            if let image = https(detail.media_url_https) {
+            if let image = imageURL(detail.media_url_https) {
                 items.append(.init(kind: .image, url: image))
             }
         }
         if items.isEmpty {
             items = (payload.photos ?? []).compactMap { photo in
-                https(photo.url).map { .init(kind: .image, url: $0) }
+                imageURL(photo.url).map { .init(kind: .image, url: $0) }
             }
         }
 
@@ -48,6 +48,21 @@ public enum XSyndication {
         items = items.filter { seen.insert($0.url).inserted }
         let caption = payload.text?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (items, caption.flatMap { $0.isEmpty ? nil : $0 })
+    }
+
+    private static func imageURL(_ raw: String?) -> URL? {
+        guard let raw, https(raw) != nil,
+              let id = firstMatch(#"pbs\.twimg\.com/media/([A-Za-z0-9_-]+)"#, in: raw)
+        else { return nil }
+        return URL(string: "https://pbs.twimg.com/media/\(id)?format=jpg&name=large")
+    }
+
+    private static func firstMatch(_ pattern: String, in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: 1), in: text)
+        else { return nil }
+        return String(text[range])
     }
 
     private static func https(_ raw: String?) -> URL? {
