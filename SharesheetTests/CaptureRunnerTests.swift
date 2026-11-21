@@ -138,13 +138,13 @@ private struct Env {
     func runner(
         _ capturer: FakeCapturer, isForeground: Bool = true, embeds: (any ResourceFetching)? = nil,
         redirects: [URL: URL] = [:], rules: (any RuleApplying)? = nil,
-        instagram: (@Sendable (URL) async -> InstagramMediaLoader.Download?)? = nil
+        socialMedia: (@Sendable (URL) async -> MediaDownload?)? = nil
     ) -> CaptureRunner {
         CaptureRunner(
             store: store, index: index, capturer: capturer,
             archiver: HTMLArchiver(fetcher: StubFetcher()), favicons: FaviconFetcher(fetcher: StubFetcher()),
             embeds: embeds, resolveRedirects: { redirects[$0] }, attemptMarker: marker, isForeground: { isForeground },
-            rules: rules, instagramMedia: instagram)
+            rules: rules, socialMedia: socialMedia)
     }
 
     func makeItem(
@@ -600,7 +600,7 @@ struct CaptureRunnerTests {
         try Data("image".utf8).write(to: image)
         try Data("video".utf8).write(to: video)
 
-        let result = await env.runner(FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), instagram: { _ in
+        let result = await env.runner(FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), socialMedia: { _ in
             .init(files: [image, video], caption: "Reel caption")
         }).runPending()
 
@@ -622,7 +622,7 @@ struct CaptureRunnerTests {
         try env.index.upsert(item)
         let folder = try makeTemporaryMediaFolder()
 
-        _ = await env.runner(FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), instagram: { _ in
+        _ = await env.runner(FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), socialMedia: { _ in
             .init(files: [folder.appending(path: "1.jpg")], caption: "Caption")
         }).runPending()
 
@@ -636,7 +636,7 @@ struct CaptureRunnerTests {
         let seen = LockedState()
         let store = env.store
 
-        _ = await env.runner(FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), instagram: { _ in
+        _ = await env.runner(FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), socialMedia: { _ in
             seen.value = try? await store.item(item.id).capture
             return nil
         }).runPending()
@@ -650,7 +650,7 @@ struct CaptureRunnerTests {
             "reel", capture: .pending, url: URL(string: "https://www.instagram.com/p/C1a2b3c/")!)
 
         let result = await env.runner(
-            FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), instagram: { _ in nil }).runPending()
+            FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), socialMedia: { _ in nil }).runPending()
 
         #expect(result.done == 1)
         let saved = try await env.store.item(item.id)
@@ -663,7 +663,7 @@ struct CaptureRunnerTests {
         _ = try await env.makeItem("plain", capture: .pending)
         let asked = LockedCounter()
 
-        _ = await env.runner(FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), instagram: { _ in
+        _ = await env.runner(FakeCapturer(), embeds: StubEmbeds(body: instagramEmbed), socialMedia: { _ in
             asked.increment()
             return nil
         }).runPending()
@@ -676,7 +676,7 @@ struct CaptureRunnerTests {
         let item = try await env.makeItem(
             "reel", capture: .done, url: URL(string: "https://www.instagram.com/p/C1a2b3c/")!)
         let folder = try makeTemporaryMediaFolder()
-        let runner = env.runner(FakeCapturer(), instagram: { _ in
+        let runner = env.runner(FakeCapturer(), socialMedia: { _ in
             .init(files: [folder.appending(path: "1.jpg")], caption: "Caption")
         })
 
@@ -689,11 +689,27 @@ struct CaptureRunnerTests {
         #expect(try env.index.search(LibraryQuery(scope: .all)).contains { $0.id == item.id })
     }
 
+    @Test func loadingMediaForAnExistingXPostAddsIt() async throws {
+        let env = try Env()
+        let item = try await env.makeItem(
+            "x", capture: .done, url: URL(string: "https://x.com/user/status/123")!)
+        let folder = try makeTemporaryMediaFolder()
+        let runner = env.runner(FakeCapturer(), socialMedia: { _ in
+            .init(files: [folder.appending(path: "1.jpg")], caption: "X caption")
+        })
+
+        #expect(await runner.loadMedia(for: item.id))
+
+        let saved = try await env.store.item(item.id)
+        #expect(saved.media.count == 1)
+        #expect(saved.description == "X caption")
+    }
+
     @Test func loadingMediaForANonInstagramPostDoesNothing() async throws {
         let env = try Env()
         let item = try await env.makeItem("plain", capture: .done)
         let asked = LockedCounter()
-        let runner = env.runner(FakeCapturer(), instagram: { _ in
+        let runner = env.runner(FakeCapturer(), socialMedia: { _ in
             asked.increment()
             return nil
         })

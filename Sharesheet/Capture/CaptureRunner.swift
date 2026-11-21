@@ -1,5 +1,4 @@
 import Foundation
-import InstagramMedia
 import SharesheetCore
 
 /// Captures screenshot and archive for saved web links, one item at a time.
@@ -16,7 +15,7 @@ actor CaptureRunner {
     private let attemptMarker: URL?
     private let isForeground: @Sendable () async -> Bool
     private let rules: (any RuleApplying)?
-    private let instagramMedia: (@Sendable (URL) async -> InstagramMediaLoader.Download?)?
+    private let socialMedia: (@Sendable (URL) async -> MediaDownload?)?
     private var tail: Task<Void, Never>?
     private var checkedAttemptMarker = false
 
@@ -29,7 +28,7 @@ actor CaptureRunner {
         resolveRedirects: @escaping @Sendable (URL) async -> URL? = CaptureRunner.followRedirects,
         attemptMarker: URL? = nil, isForeground: @escaping @Sendable () async -> Bool = { true },
         rules: (any RuleApplying)? = nil,
-        instagramMedia: (@Sendable (URL) async -> InstagramMediaLoader.Download?)? = nil
+        socialMedia: (@Sendable (URL) async -> MediaDownload?)? = nil
     ) {
         self.embeds = embeds
         self.resolveRedirects = resolveRedirects
@@ -41,7 +40,7 @@ actor CaptureRunner {
         self.attemptMarker = attemptMarker
         self.isForeground = isForeground
         self.rules = rules
-        self.instagramMedia = instagramMedia
+        self.socialMedia = socialMedia
     }
 
     /// Captures items with `capture == .pending`, oldest first. Stops early when cancelled.
@@ -217,8 +216,8 @@ actor CaptureRunner {
         if let archive, let archiveText { try? index.setArchiveText(archiveText, forArchive: archive) }
         if succeeded { await storeFavicon(host: url.host(), iconURL: iconURL) }
         // The item is already `.done`; a failed or interrupted download leaves it without media.
-        if succeeded, let instagramMedia, SocialEmbed.platform(of: url) == .instagram {
-            await addInstagramMedia(for: item.id, postURL: url, instagramMedia: instagramMedia)
+        if succeeded, let socialMedia, SocialEmbed.platform(of: url) != nil {
+            await addMedia(for: item.id, postURL: url, socialMedia: socialMedia)
         }
         return succeeded ? .done : transient ? .deferred : .failed
     }
@@ -263,11 +262,11 @@ actor CaptureRunner {
 
     /// Best effort after the item is `.done`: copy the media next to it, then one second write.
     @discardableResult
-    private func addInstagramMedia(
+    private func addMedia(
         for id: ItemID, postURL: URL,
-        instagramMedia: @Sendable (URL) async -> InstagramMediaLoader.Download?
+        socialMedia: @Sendable (URL) async -> MediaDownload?
     ) async -> Bool {
-        guard let download = await instagramMedia(postURL) else { return false }
+        guard let download = await socialMedia(postURL) else { return false }
         defer {
             if let first = download.files.first {
                 try? FileManager.default.removeItem(at: first.deletingLastPathComponent())
@@ -295,10 +294,10 @@ actor CaptureRunner {
     func loadMedia(for id: ItemID) async -> Bool {
         await serialized { runner in
             guard let item = try? await runner.store.item(id), let url = item.url,
-                  SocialEmbed.platform(of: url) == .instagram,
-                  let instagramMedia = runner.instagramMedia
+                  SocialEmbed.platform(of: url) != nil,
+                  let socialMedia = runner.socialMedia
             else { return false }
-            return await runner.addInstagramMedia(for: id, postURL: url, instagramMedia: instagramMedia)
+            return await runner.addMedia(for: id, postURL: url, socialMedia: socialMedia)
         }
     }
 

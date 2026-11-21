@@ -1,9 +1,11 @@
 import AVKit
+import InstagramMedia
 import QuickLook
 import QuickLookThumbnailing
 import SharesheetCore
 import SharesheetUI
 import SwiftUI
+import XMedia
 
 /// One item: its screenshot, file or text on top, then title, note, tags, favorite, collection, highlights,
 /// the archive and Open in Safari. Edits are saved 1 s after the last change and when leaving the screen.
@@ -150,7 +152,7 @@ struct ItemDetailView: View {
             Button("OK") { if failure.leavesScreen { dismiss() } }
         } message: { failure in
             switch failure {
-            case .media: Text("For private posts, connect Instagram in Settings.")
+            case .media: Text("For private posts, connect Instagram or X in Settings.")
             default: Text(verbatim: item?.title ?? "")
             }
         }
@@ -184,7 +186,7 @@ struct ItemDetailView: View {
                     }
                     .disabled(isLoadingMedia)
                 } footer: {
-                    Text("For private posts, connect Instagram in Settings first.")
+                    Text("For private posts, connect Instagram or X in Settings first.")
                 }
             }
             if !item.fields.isEmpty {
@@ -548,8 +550,13 @@ struct ItemDetailView: View {
     }
 
     private func showsMediaLoader(_ item: Item) -> Bool {
-        item.media.isEmpty && item.capture == .done
-            && item.url.map { SocialEmbed.platform(of: $0) == .instagram } == true
+        guard item.media.isEmpty, item.capture == .done, let url = item.url,
+              let platform = SocialEmbed.platform(of: url) else { return false }
+        switch platform {
+        case .instagram: return InstagramPost.shortcode(in: url) != nil
+        case .x: return XTweetID.string(from: url) != nil
+        case .facebook: return false
+        }
     }
 
     private func loadMedia() async {

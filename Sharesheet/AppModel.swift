@@ -4,6 +4,7 @@ import Observation
 import OSLog
 import SharesheetCore
 import UIKit
+import XMedia
 
 enum ICloudState: Equatable {
     /// The store factory has not answered yet.
@@ -747,12 +748,23 @@ extension AppModel {
             fetcher: fetcher,
             diagnostics: { report in await Self.writeMediaDiagnostic(report) },
             session: { InstagramSessionStore.shared.load() })
+        let xMedia = XMediaLoader(
+            fetcher: fetcher,
+            diagnostics: { report in await Self.writeMediaDiagnostic(report, prefix: "x-media") },
+            session: { WebSessionStore.x.load() })
+        let socialMedia: @Sendable (URL) async -> MediaDownload? = { url in
+            switch SocialEmbed.platform(of: url) {
+            case .instagram: await instagramMedia.download(for: url)
+            case .x: await xMedia.download(for: url)
+            default: nil
+            }
+        }
         let runner = CaptureRunner(
             store: store, index: index, capturer: WebPageCapturer(),
             archiver: HTMLArchiver(fetcher: fetcher), favicons: FaviconFetcher(),
             embeds: fetcher, attemptMarker: caches.appending(path: "capture-attempt"),
             isForeground: isForeground, rules: rules,
-            instagramMedia: { await instagramMedia.download(for: $0) })
+            socialMedia: socialMedia)
         let analyzer = DocumentAnalyzer(
             store: store, index: index, tagger: FallbackTagger(
                 primary: FoundationModelsTagger(),
@@ -766,12 +778,12 @@ extension AppModel {
     }
 
     /// A failed Instagram media download leaves a report in the library's hidden `.diagnostics` folder.
-    nonisolated private static func writeMediaDiagnostic(_ report: String) async {
+    nonisolated private static func writeMediaDiagnostic(_ report: String, prefix: String = "instagram-media") async {
         guard let root = await ICloudLocator.libraryRoot() else { return }
         let folder = root.appending(path: ".diagnostics", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let name = "instagram-media-\(stamp)-\(UUID().uuidString.prefix(8)).md"
+        let name = "\(prefix)-\(stamp)-\(UUID().uuidString.prefix(8)).md"
         try? Data(report.utf8).write(to: folder.appending(path: name), options: .atomic)
     }
 
