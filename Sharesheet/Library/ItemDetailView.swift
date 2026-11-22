@@ -443,7 +443,16 @@ struct ItemDetailView: View {
     private func load() async {
         guard item == nil else { return }
         do {
-            let loaded = try await model.loadItem(id)
+            var loaded = try await model.loadItem(id)
+            // Items saved before the caption title fix still show the post URL; use their stored caption.
+            if let url = loaded.url, let caption = loaded.description, !caption.isEmpty,
+               let platform = SocialEmbed.platform(of: url), platform != .spotify,
+               let title = CaptureRunner.derivedTitle(
+                   item: loaded, platform: platform, postURL: url, caption: caption),
+               title != loaded.title {
+                loaded.title = title
+                if let saved = try? await model.save(loaded) { loaded = saved }
+            }
             item = loaded
             baseline = Edits(loaded)
         } catch StoreError.notFound {

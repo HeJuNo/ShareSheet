@@ -42,6 +42,29 @@ final class MediaPreviewUITests: XCTestCase {
         XCTAssertCentered(app.images["Media 3 of 3"].firstMatch, in: app)
     }
 
+    /// Local probe: the mixed sample (image, video, HEIC, WebP, audio) shows which thumbnails Quick Look cannot make.
+    func testMixedMediaThumbnails() throws {
+        let app = XCUIApplication()
+        app.launch()
+        let unsorted = app.staticTexts["Unsorted"].firstMatch
+        XCTAssertTrue(unsorted.waitForExistence(timeout: 15), app.debugDescription)
+        unsorted.tap()
+        let item = app.staticTexts["Mixed Media"].firstMatch
+        guard item.waitForExistence(timeout: 10) else { throw XCTSkip("Seed Mixed Media first.") }
+        item.tap()
+
+        let first = app.buttons["Media 1 of 5, image"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 10), app.debugDescription)
+        sleep(5)
+        shot("mixed-strip-1")
+        first.swipeLeft()
+        sleep(2)
+        shot("mixed-strip-2")
+        app.buttons["Media 3 of 5, image"].firstMatch.swipeLeft()
+        sleep(2)
+        shot("mixed-strip-3")
+    }
+
     /// The sample post seeded into the simulator library; skipped where the seed is not present.
     private func openDetail() throws -> XCUIApplication {
         let app = XCUIApplication()

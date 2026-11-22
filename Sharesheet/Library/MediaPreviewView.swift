@@ -88,18 +88,59 @@ private struct MediaThumbnail: View {
         .accessibilityLabel(Text("Media \(position + 1) of \(count), \(kindName)"))
         .accessibilityHint(Text((relativePath as NSString).lastPathComponent))
         .task(id: relativePath) {
-            url = await model.attachmentURL(relativePath)
-            let source = if kind == .audio, let coverPath, coverPath != relativePath {
-                await model.attachmentURL(coverPath)
-            } else {
-                url
+            let maxPixel = Int(Self.size * displayScale)
+            // iCloud may still be downloading: a short wait and a retry leaves the download running, instead
+            // of showing a blank tile forever when the first request times out.
+            for attempt in 0..<6 {
+                guard !Task.isCancelled else { return }
+                guard let resolved = await model.attachmentURL(relativePath, timeout: .seconds(15)) else {
+                    if attempt < 5 { try? await Task.sleep(for: .seconds(2)) }
+                    continue
+                }
+                url = resolved
+                if kind == .audio {
+                    if let coverPath, coverPath != relativePath,
+                       let cover = await model.attachmentURL(coverPath, timeout: .seconds(15)) {
+                        thumbnail = await MediaThumbnailLoader.image(for: .image, url: cover, maxPixel: maxPixel)
+                    }
+                    return  // without a cover the grey tile and the music note are the preview
+                }
+                thumbnail = await MediaThumbnailLoader.image(for: kind, url: resolved, maxPixel: maxPixel)
+                return  // a readable file that yields no image will not improve on a retry
             }
-            guard let source else { return }
-            let request = QLThumbnailGenerator.Request(
-                fileAt: source, size: CGSize(width: Self.size, height: Self.size), scale: displayScale,
-                representationTypes: .thumbnail)
-            thumbnail = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).uiImage
         }
+    }
+}
+
+/// Renders the tile image from the file itself: ImageIO for pictures, the first frame for videos, Quick Look
+/// only for file types that have no direct decoder. Quick Look alone failed for some files and left blank tiles.
+private enum MediaThumbnailLoader {
+    static func image(for kind: MediaKind, url: URL, maxPixel: Int) async -> UIImage? {
+        switch kind {
+        case .image:
+            let data = await Task.detached(priority: .utility) {
+                ImageDownsampler.jpegData(fromFileAt: url, maxPixelSize: maxPixel, quality: 0.85)
+            }.value
+            if let data, let image = UIImage(data: data) { return image }
+            return await quickLook(url, maxPixel: maxPixel)
+        case .video:
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: maxPixel, height: maxPixel)
+            if let frame = try? await generator.image(at: CMTime(seconds: 0.1, preferredTimescale: 600)) {
+                return UIImage(cgImage: frame.image)
+            }
+            return await quickLook(url, maxPixel: maxPixel)
+        case .audio, .other:
+            return await quickLook(url, maxPixel: maxPixel)
+        }
+    }
+
+    private static func quickLook(_ url: URL, maxPixel: Int) async -> UIImage? {
+        let request = QLThumbnailGenerator.Request(
+            fileAt: url, size: CGSize(width: maxPixel, height: maxPixel), scale: 1,
+            representationTypes: .thumbnail)
+        return try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).uiImage
     }
 }
 

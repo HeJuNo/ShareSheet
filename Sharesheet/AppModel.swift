@@ -661,9 +661,10 @@ enum TrashSettings {
     var downloadTimeout: Duration = .seconds(60)
 
     /// The attachment's file, waiting while iCloud downloads it; nil when it is gone or never arrives.
-    func attachmentURL(_ relativePath: String) async -> URL? {
+    /// A shorter timeout lets a thumbnail retry while the download continues in the background.
+    func attachmentURL(_ relativePath: String, timeout: Duration? = nil) async -> URL? {
         let clock = ContinuousClock()
-        let deadline = clock.now + downloadTimeout
+        let deadline = clock.now + (timeout ?? downloadTimeout)
         while true {
             do {
                 let url = try await requireStore().attachmentURL(relativePath)

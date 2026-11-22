@@ -273,28 +273,60 @@ actor CaptureRunner {
             }
         }
         guard let current = try? await store.item(id) else { return false }
+        let platform = SocialEmbed.platform(of: postURL)
+        let caption = download.caption
+        // Instagram and X often arrive with the post URL as the title; the caption's first line is meaningful.
+        let derived = caption.flatMap {
+            Self.derivedTitle(item: current, platform: platform, postURL: postURL, caption: $0)
+        }
         let names = download.files.map { file in
             FileNamer.attachmentName(
-                base: current.title, date: current.created,
+                base: derived ?? current.title, date: current.created,
                 ext: file.pathExtension.isEmpty ? "bin" : file.pathExtension, existing: [])
         }
-        let caption = download.caption
         guard let saved = try? await store.addMedia(
             from: download.files, preferredNames: names, to: id,
             update: { item, paths in
                 item.media = paths
                 if let caption {
-                    if SocialEmbed.platform(of: postURL) == .spotify {
-                        // A song's caption is its name and artists; that reads better as the title.
-                        if !item.titleManual { item.title = caption }
-                    } else if (item.description ?? "").isEmpty {
-                        item.description = caption
-                    }
+                    if let derived, !item.titleManual { item.title = derived }
+                    if platform != .spotify, (item.description ?? "").isEmpty { item.description = caption }
                 }
             }
         ) else { return false }
         try? index.upsert(saved)
         return !saved.media.isEmpty
+    }
+
+    /// `nil` keeps the current title. Spotify always takes the caption; other posts only when the title is
+    /// still the URL (or a generic page title), never after the user edited it.
+    static func derivedTitle(
+        item: Item, platform: SocialEmbed.Platform?, postURL: URL, caption: String
+    ) -> String? {
+        guard !item.titleManual else { return nil }
+        if platform == .spotify { return caption }
+        guard looksLikeURLTitle(item.title, postURL: postURL) else { return nil }
+        return captionTitle(caption)
+    }
+
+    private static func looksLikeURLTitle(_ title: String, postURL: URL) -> Bool {
+        let text = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty || text == postURL.absoluteString || text == postURL.absoluteString.removingPercentEncoding {
+            return true
+        }
+        if text == postURL.host || text == postURL.host?.replacingOccurrences(of: "www.", with: "") { return true }
+        if let url = URL(string: text), url.scheme == "http" || url.scheme == "https" { return true }
+        let generic = ["instagram", "instagram post", "login • instagram", "x", "facebook", "log in"]
+        return generic.contains(text.lowercased())
+    }
+
+    /// The first non-empty caption line, short enough for a title row.
+    private static func captionTitle(_ caption: String) -> String? {
+        let line = caption.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
+        guard let line else { return nil }
+        return line.count > 90 ? String(line.prefix(89)) + "…" : line
     }
 
     /// Loads media for an already saved Instagram item, without capturing the page again.

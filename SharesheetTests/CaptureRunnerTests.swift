@@ -613,6 +613,41 @@ struct CaptureRunnerTests {
         #expect(!FileManager.default.fileExists(atPath: folder.path))
     }
 
+    @Test func instagramURLTitleIsReplacedByTheFirstCaptionLine() async throws {
+        let env = try Env()
+        let url = URL(string: "https://www.instagram.com/reel/DfNDnB4oZut/")!
+        let item = try await env.makeItem(url.absoluteString, capture: .done, url: url)
+        let folder = try makeTemporaryMediaFolder()
+        let runner = env.runner(FakeCapturer(), socialMedia: { _ in
+            .init(files: [folder.appending(path: "1.jpg")], caption: "First line\nSecond line")
+        })
+
+        #expect(await runner.loadMedia(for: item.id))
+
+        let saved = try await env.store.item(item.id)
+        #expect(saved.title == "First line")
+        #expect(saved.description == "First line\nSecond line")
+    }
+
+    @Test func anEditedInstagramTitleIsKept() async throws {
+        let env = try Env()
+        let url = URL(string: "https://www.instagram.com/reel/DfNDnB4oZut/")!
+        let item = try await env.makeItem(url.absoluteString, capture: .done, url: url)
+        var edited = try await env.store.item(item.id)
+        edited.titleManual = true
+        _ = try await env.store.update(edited)
+        let folder = try makeTemporaryMediaFolder()
+        let runner = env.runner(FakeCapturer(), socialMedia: { _ in
+            .init(files: [folder.appending(path: "1.jpg")], caption: "First line\nSecond line")
+        })
+
+        #expect(await runner.loadMedia(for: item.id))
+
+        let saved = try await env.store.item(item.id)
+        #expect(saved.title == url.absoluteString)
+        #expect(saved.description == "First line\nSecond line")
+    }
+
     @Test func aUserDescriptionIsNotReplacedByTheCaption() async throws {
         let env = try Env()
         let url = URL(string: "https://www.instagram.com/p/C1a2b3c/")!
