@@ -115,19 +115,35 @@ struct MediaPreviewView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack {
             Color.black.ignoresSafeArea()
-            TabView(selection: $selection) {
-                ForEach(paths.indices, id: \.self) { index in
-                    MediaPreviewPage(
-                        relativePath: paths[index], position: index, count: paths.count,
-                        isSelected: selection == index)
-                        .tag(index)
+            // A plain paging ScrollView instead of TabView: TabView measured the pages differently after a
+            // swipe, so a landscape page sat ~130 pt off-screen. Every page here has the same explicit width.
+            GeometryReader { proxy in
+                ScrollViewReader { scroller in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 0) {
+                            ForEach(paths.indices, id: \.self) { index in
+                                MediaPreviewPage(
+                                    relativePath: paths[index], position: index, count: paths.count,
+                                    isSelected: selection == index)
+                                    .frame(width: proxy.size.width, height: proxy.size.height)
+                                    .id(index)
+                            }
+                        }
+                        .scrollTargetLayout()
+                    }
+                    .scrollTargetBehavior(.paging)
+                    .scrollPosition(id: Binding(
+                        get: { selection },
+                        set: { if let page = $0 { selection = page } }))
+                    .onAppear { scroller.scrollTo(selection, anchor: .center) }
+                    .onChange(of: proxy.size) { _, _ in scroller.scrollTo(selection, anchor: .center) }
                 }
             }
-            .tabViewStyle(.page(indexDisplayMode: paths.count > 1 ? .always : .never))
-            .indexViewStyle(.page(backgroundDisplayMode: .always))
             .ignoresSafeArea()
+        }
+        .overlay(alignment: .topTrailing) {
             Button {
                 dismiss()
             } label: {
@@ -139,6 +155,19 @@ struct MediaPreviewView: View {
             }
             .padding(12)
             .accessibilityLabel(Text("Close"))
+        }
+        .overlay(alignment: .bottom) {
+            if paths.count > 1 {
+                HStack(spacing: 8) {
+                    ForEach(paths.indices, id: \.self) { index in
+                        Circle()
+                            .fill(index == selection ? .white : .white.opacity(0.35))
+                            .frame(width: 8, height: 8)
+                    }
+                }
+                .padding(.bottom, 10)
+                .accessibilityHidden(true)
+            }
         }
         .preferredColorScheme(.dark)
         .allowsLandscape()
