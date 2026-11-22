@@ -122,11 +122,14 @@ struct MediaPreviewView: View {
             GeometryReader { proxy in
                 ScrollViewReader { scroller in
                     ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 0) {
+                        // A plain HStack keeps every page alive. The page at distance 1 is prefetched, so the
+                        // next/previous file is already decoded when it scrolls in; a lazy stack dropped that
+                        // state and showed a spinner (visible flicker) on every swipe.
+                        HStack(spacing: 0) {
                             ForEach(paths.indices, id: \.self) { index in
                                 MediaPreviewPage(
                                     relativePath: paths[index], position: index, count: paths.count,
-                                    isSelected: selection == index)
+                                    isSelected: selection == index, isNear: abs(index - selection) <= 1)
                                     .frame(width: proxy.size.width, height: proxy.size.height)
                                     .id(index)
                             }
@@ -179,6 +182,8 @@ private struct MediaPreviewPage: View {
     let position: Int
     let count: Int
     let isSelected: Bool
+    /// Selected page or one of its neighbours: load and keep the image/player ready before it scrolls in.
+    let isNear: Bool
     @Environment(AppModel.self) private var model
     @State private var url: URL?
     @State private var resolved = false
@@ -225,9 +230,10 @@ private struct MediaPreviewPage: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task(id: isSelected) {
-            guard isSelected else {
-                // Leaving a page releases its player and decoded image; the pager keeps every page alive.
+        .task(id: isNear) {
+            guard isNear else {
+                // Pages two or more away release their player and decoded image; the selected page and both
+                // neighbours stay ready, so a swipe never uncovers a blank page.
                 player?.pause()
                 player = nil
                 image = nil
@@ -251,6 +257,7 @@ private struct MediaPreviewPage: View {
                     let data = await Task.detached(priority: .userInitiated) {
                         ImageDownsampler.jpegData(fromFileAt: url, maxPixelSize: pixelSize, quality: 0.9)
                     }.value
+                    guard !Task.isCancelled else { return }
                     image = data.flatMap(UIImage.init(data:))
                     missing = image == nil
                 }
@@ -258,6 +265,7 @@ private struct MediaPreviewPage: View {
                 break
             }
         }
+        .onChange(of: isSelected) { _, selected in if !selected { player?.pause() } }
         .onDisappear { player?.pause() }
     }
 
