@@ -215,6 +215,16 @@ struct MediaPreviewView: View {
         }
         .preferredColorScheme(.dark)
         .allowsLandscape()
+        // Videos and Spotify previews are media playback: the playback category lets them be heard even with
+        // the ring/silent switch on. Without it AVPlayer uses the ambient category and stays silent there.
+        .onAppear {
+            let session = AVAudioSession.sharedInstance()
+            try? session.setCategory(.playback)
+            try? session.setActive(true)
+        }
+        .onDisappear {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 }
 

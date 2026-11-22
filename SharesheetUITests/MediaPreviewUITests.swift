@@ -65,6 +65,34 @@ final class MediaPreviewUITests: XCTestCase {
         shot("mixed-strip-3")
     }
 
+    /// Local probe with a real Spotify track: load the official preview, open the audio page and play it.
+    func testSpotifyPreviewLoadsAndPlays() throws {
+        let app = XCUIApplication()
+        app.launch()
+        let unsorted = app.staticTexts["Unsorted"].firstMatch
+        XCTAssertTrue(unsorted.waitForExistence(timeout: 15), app.debugDescription)
+        unsorted.tap()
+        let item = app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@ OR label CONTAINS %@", "spotify.com/track", "Jestofunk")).firstMatch
+        guard item.waitForExistence(timeout: 10) else { throw XCTSkip("Seed Spotify Test first.") }
+        item.tap()
+
+        let load = app.buttons["Load media"].firstMatch
+        if load.waitForExistence(timeout: 3) { load.tap() }  // the second run already has the media
+
+        let audio = app.buttons["Media 2 of 2, audio clip"].firstMatch
+        XCTAssertTrue(audio.waitForExistence(timeout: 60), app.debugDescription)
+        shot("spotify-loaded")
+        audio.tap()
+
+        let play = app.buttons["Play"].firstMatch
+        XCTAssertTrue(play.waitForExistence(timeout: 10), app.debugDescription)
+        play.tap()
+        sleep(2)
+        XCTAssertTrue(app.buttons["Pause"].firstMatch.exists, "the preview player did not start")
+        shot("spotify-playing")
+    }
+
     /// The sample post seeded into the simulator library; skipped where the seed is not present.
     private func openDetail() throws -> XCUIApplication {
         let app = XCUIApplication()
