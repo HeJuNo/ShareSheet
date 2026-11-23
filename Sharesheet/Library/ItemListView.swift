@@ -1,4 +1,5 @@
 import SharesheetCore
+import SharesheetUI
 import SwiftUI
 
 /// The items of one scope, newest first, searchable and filterable by tag.
@@ -122,42 +123,43 @@ struct ItemResults: View {
         }
     }
 
+    private enum BatchFailure {
+        case move(Int), tag(Int), delete(Int)
+
+        var title: Text {
+            switch self {
+            case .move(let count): Text("Couldn’t move \(count) items")
+            case .tag(let count): Text("Couldn’t add the tag to \(count) items")
+            case .delete(let count): Text("Couldn’t delete \(count) items")
+            }
+        }
+    }
+
     @Environment(AppModel.self) private var model
     let query: LibraryQuery
     @State private var failure: Failure?
     @State private var showsStats = false
+    @State private var selecting = false
+    @State private var selection = Set<ItemID>()
+    @State private var showingMove = false
+    @State private var moveTarget = CollectionPath.unsorted
+    @State private var showingTag = false
+    @State private var newTag = ""
+    @State private var confirmsDelete = false
+    @State private var batchFailure: BatchFailure?
 
     var body: some View {
         let items = model.items(query)
         let stats = model.fieldStats(query)
         List {
             ForEach(items) { item in
-                NavigationLink(value: item.id) {
-                    ItemRow(item: item, favicon: model.favicon(for: item))
-                }
-                .swipeActions(edge: .leading) {
-                    Button {
-                        toggleFavorite(item)
-                    } label: {
-                        if item.favorite {
-                            Label("Unfavorite", systemImage: "star.slash")
-                        } else {
-                            Label("Favorite", systemImage: "star")
-                        }
-                    }
-                    .tint(.yellow)
-                }
-                .swipeActions(edge: .trailing) {
-                    // No confirmation: the item goes to the Trash, and the banner offers Undo.
-                    Button(role: .destructive) {
-                        delete(item)
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-                }
+                row(item)
             }
         }
         .listStyle(.plain)
+        .onChange(of: items.map(\.id)) { _, ids in
+            selection.formIntersection(Set(ids))
+        }
         .toolbar {
             // Not in the bottom bar: on iPhone the search field lives there, and a button appearing with the first
             // letter made the field disappear.
@@ -166,8 +168,55 @@ struct ItemResults: View {
                     Button { showsStats = true } label: { Label("Totals", systemImage: "sum") }
                 }
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    selecting.toggle()
+                    selection.removeAll()
+                } label: {
+                    Text(selecting ? "Done" : "Select")
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if selecting { batchBar }
         }
         .sheet(isPresented: $showsStats) { FieldStatsSheet(stats: stats) }
+        .sheet(isPresented: $showingMove) {
+            NavigationStack {
+                Form {
+                    CollectionPicker(
+                        selection: $moveTarget, collections: model.collections,
+                        onCreate: { name, parent in try? await model.createCollection(named: name, in: parent) })
+                    Button("Move \(selection.count) items") {
+                        showingMove = false
+                        moveSelection()
+                    }
+                    .disabled(selection.isEmpty)
+                }
+                .navigationTitle("Move")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showingMove = false }
+                    }
+                }
+            }
+        }
+        .alert("Add tag", isPresented: $showingTag) {
+            TextField("Tag", text: $newTag)
+            Button("Cancel", role: .cancel) {}
+            Button("Add") { addTag() }
+        } message: {
+            Text("The tag is added to \(selection.count) items.")
+        }
+        .confirmationDialog(
+            "Delete \(selection.count) items?", isPresented: $confirmsDelete, titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) { deleteSelection() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("They go to the Trash.")
+        }
         .overlay {
             if items.isEmpty {
                 if let text = query.text {
@@ -179,6 +228,121 @@ struct ItemResults: View {
         }
         .alert(failure?.title ?? Text(verbatim: ""), isPresented: $failure.isPresent()) {
             Button("OK") {}
+        }
+        .alert(batchFailure?.title ?? Text(verbatim: ""), isPresented: $batchFailure.isPresent()) {
+            Button("OK") { batchFailure = nil }
+        }
+    }
+
+    @ViewBuilder private func row(_ item: IndexedItem) -> some View {
+        if selecting {
+            Button {
+                toggle(item.id)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: selection.contains(item.id) ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(.tint)
+                        .accessibilityHidden(true)
+                    ItemRow(item: item, favicon: model.favicon(for: item))
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(Text(selection.contains(item.id) ? "Selected" : "Not selected"))
+        } else {
+            NavigationLink(value: item.id) {
+                ItemRow(item: item, favicon: model.favicon(for: item))
+            }
+            .swipeActions(edge: .leading) {
+                Button {
+                    toggleFavorite(item)
+                } label: {
+                    if item.favorite {
+                        Label("Unfavorite", systemImage: "star.slash")
+                    } else {
+                        Label("Favorite", systemImage: "star")
+                    }
+                }
+                .tint(.yellow)
+            }
+            .swipeActions(edge: .trailing) {
+                // No confirmation: the item goes to the Trash, and the banner offers Undo.
+                Button(role: .destructive) {
+                    delete(item)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    private var batchBar: some View {
+        HStack(spacing: 16) {
+            Button {
+                moveTarget = .unsorted
+                showingMove = true
+            } label: {
+                Label("Move", systemImage: "folder")
+            }
+            Button {
+                newTag = ""
+                showingTag = true
+            } label: {
+                Label("Tag", systemImage: "tag")
+            }
+            Button(role: .destructive) {
+                confirmsDelete = true
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+        .buttonStyle(.bordered)
+        .disabled(selection.isEmpty)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+    }
+
+    private func toggle(_ id: ItemID) {
+        if selection.contains(id) {
+            selection.remove(id)
+        } else {
+            selection.insert(id)
+        }
+    }
+
+    private func moveSelection() {
+        let ids = Array(selection)
+        Task {
+            let failed = await model.move(ids, to: moveTarget)
+            finish(failed, failure: .move(failed.count))
+        }
+    }
+
+    private func addTag() {
+        let tag = newTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tag.isEmpty else { return }
+        let ids = Array(selection)
+        Task {
+            let failed = await model.addTag(tag, to: ids)
+            finish(failed, failure: .tag(failed.count))
+        }
+    }
+
+    private func deleteSelection() {
+        let ids = Array(selection)
+        Task {
+            let failed = await model.delete(ids)
+            finish(failed, failure: .delete(failed.count))
+        }
+    }
+
+    /// Only the failed IDs stay selected; a fully successful action leaves selection mode.
+    private func finish(_ failed: [ItemID], failure: BatchFailure) {
+        selection = Set(failed)
+        if failed.isEmpty {
+            selecting = false
+        } else {
+            batchFailure = failure
         }
     }
 
