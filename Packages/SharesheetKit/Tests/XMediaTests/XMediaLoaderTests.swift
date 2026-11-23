@@ -187,4 +187,57 @@ struct XMediaLoaderTests {
         #expect(!StubProtocol.requests.contains { $0.url?.absoluteString == noSessionPage })
         #expect(sink.reports.first?.contains("syndication") == true)
     }
+
+    @Test func validateSessionReportsAValidSession() async {
+        let url = uniqueProbeURL()
+        StubProtocol.serve(url.absoluteString, .init(body: Data("<html><title>Settings</title></html>".utf8)))
+        #expect(await loader(#"{"text":""}"#, session: signedInSession())
+            .validateSession(probeURL: url) == .valid)
+    }
+
+    @Test func validateSessionReportsAnExpiredSessionOnARedirect() async {
+        let url = uniqueProbeURL()
+        StubProtocol.serve(url.absoluteString, .init(status: 302, body: Data()))
+        #expect(await loader(#"{"text":""}"#, session: signedInSession())
+            .validateSession(probeURL: url) == .expired)
+    }
+
+    @Test func validateSessionReportsAnExpiredSessionOnALoginPage() async {
+        let url = uniqueProbeURL()
+        StubProtocol.serve(url.absoluteString, .init(
+            body: Data(#"<html><form action="/i/flow/login"></form></html>"#.utf8)))
+        #expect(await loader(#"{"text":""}"#, session: signedInSession())
+            .validateSession(probeURL: url) == .expired)
+    }
+
+    @Test func validateSessionReportsUnknownOnAServerError() async {
+        let url = uniqueProbeURL()
+        StubProtocol.serve(url.absoluteString, .init(status: 500, body: Data()))
+        #expect(await loader(#"{"text":""}"#, session: signedInSession())
+            .validateSession(probeURL: url) == .unknown)
+    }
+
+    @Test func validateSessionReportsUnknownWhenTheRequestFails() async {
+        #expect(await loader(#"{"text":""}"#, session: signedInSession())
+            .validateSession(probeURL: uniqueProbeURL()) == .unknown)
+    }
+
+    @Test func validateSessionWithoutAStoredSessionIsNoSession() async {
+        #expect(await loader(#"{"text":""}"#).validateSession(probeURL: uniqueProbeURL()) == .noSession)
+    }
+
+    @Test func validateSessionReportsAnExpiredSessionForALocallyExpiredCookie() async {
+        let url = uniqueProbeURL()
+        let expired = WebSession(cookies: [
+            .init(name: "auth_token", value: "a", domain: ".x.com", path: "/",
+                  expires: Date(timeIntervalSince1970: 0))
+        ])
+        #expect(await loader(#"{"text":""}"#, session: expired)
+            .validateSession(probeURL: url) == .expired)
+        #expect(!StubProtocol.requests.contains { $0.url == url })
+    }
+}
+
+private func uniqueProbeURL() -> URL {
+    URL(string: "https://\(UUID().uuidString).test/probe")!
 }
