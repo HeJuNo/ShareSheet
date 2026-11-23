@@ -56,6 +56,39 @@ public struct InstagramMediaLoader: Sendable {
         self.sessionProvider = session
     }
 
+    static let sessionProbeURL = URL(string: "https://www.instagram.com/api/v1/accounts/current_user/?edit=true")!
+
+    /// Checks whether Instagram still accepts the stored session; never changes it.
+    public func validateSession() async -> SessionStatus {
+        await validateSession(probeURL: Self.sessionProbeURL)
+    }
+
+    /// Test seam; production uses `sessionProbeURL`.
+    func validateSession(probeURL: URL) async -> SessionStatus {
+        guard let session = sessionProvider?() else { return .noSession }
+        guard session.isUsable(requiredCookie: "sessionid") else { return .expired }
+
+        var request = URLRequest(url: probeURL)
+        request.timeoutInterval = min(15, limits.fileTimeout)
+        request.setValue(session.cookieHeader, forHTTPHeaderField: "Cookie")
+        if let csrf = session.value(named: "csrftoken") {
+            request.setValue(csrf, forHTTPHeaderField: "X-CSRFToken")
+        }
+        request.setValue("936619743392459", forHTTPHeaderField: "X-IG-App-ID")
+        request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+        request.setValue("https://www.instagram.com/", forHTTPHeaderField: "Referer")
+        request.setValue("*/*", forHTTPHeaderField: "Accept")
+
+        guard let (_, response) = try? await urlSession.data(for: request),
+              let http = response as? HTTPURLResponse
+        else { return .unknown }
+        if http.statusCode == 401 || http.statusCode == 403 || (300..<400).contains(http.statusCode)
+            || http.url?.path.contains("/accounts/login") == true {
+            return .expired
+        }
+        return (200..<300).contains(http.statusCode) ? .valid : .unknown
+    }
+
     /// Der Aufrufer besitzt den temporären Ordner von `files` und löscht ihn nach dem Kopieren.
     /// Jeder Fehlschlag und jede teilweise fehlende Datei erzeugt einen Diagnosebericht.
     public func download(for postURL: URL) async -> Download? {

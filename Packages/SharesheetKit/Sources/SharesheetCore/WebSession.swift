@@ -1,5 +1,13 @@
 import Foundation
 
+/// The result of checking a stored web session against its service.
+public enum SessionStatus: Sendable, Equatable {
+    case noSession
+    case valid
+    case expired
+    case unknown
+}
+
 /// Cookies of a signed-in web session, shared by Instagram and X. The app stores it in the keychain.
 public struct WebSession: Codable, Equatable, Sendable {
     public struct Cookie: Codable, Equatable, Sendable {

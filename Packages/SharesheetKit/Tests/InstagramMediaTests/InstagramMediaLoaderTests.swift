@@ -331,4 +331,51 @@ struct InstagramMediaLoaderTests {
         #expect(report.contains("decode contextJSON"))
         #expect(report.contains("session has expired"))
     }
+
+    @Test func validateSessionReportsAValidSession() async {
+        StubProtocol.serve(
+            InstagramMediaLoader.sessionProbeURL.absoluteString,
+            .init(body: Data(#"{"status":"ok"}"#.utf8)))
+        #expect(await loader("<html></html>", session: signedInSession()).validateSession() == .valid)
+    }
+
+    @Test func validateSessionReportsAnExpiredSession() async {
+        let url = uniqueProbeURL()
+        StubProtocol.serve(url.absoluteString, .init(status: 302, body: Data()))
+        #expect(await loader("<html></html>", session: signedInSession())
+            .validateSession(probeURL: url) == .expired)
+    }
+
+    @Test func validateSessionReportsUnknownOnAServerError() async {
+        let url = uniqueProbeURL()
+        StubProtocol.serve(url.absoluteString, .init(status: 500, body: Data()))
+        #expect(await loader("<html></html>", session: signedInSession())
+            .validateSession(probeURL: url) == .unknown)
+    }
+
+    @Test func validateSessionReportsUnknownWhenTheRequestFails() async {
+        #expect(await loader("<html></html>", session: signedInSession())
+            .validateSession(probeURL: uniqueProbeURL()) == .unknown)
+    }
+
+    @Test func validateSessionWithoutAStoredSessionDoesNotRequest() async {
+        let url = uniqueProbeURL()
+        #expect(await loader("<html></html>").validateSession(probeURL: url) == .noSession)
+        #expect(!StubProtocol.requests.contains { $0.url == url })
+    }
+
+    @Test func validateSessionReportsAnExpiredSessionForALocallyExpiredCookie() async {
+        let url = uniqueProbeURL()
+        let expired = WebSession(cookies: [
+            .init(name: "sessionid", value: "s", domain: ".instagram.com", path: "/",
+                  expires: Date(timeIntervalSince1970: 0))
+        ])
+        #expect(await loader("<html></html>", session: expired)
+            .validateSession(probeURL: url) == .expired)
+        #expect(!StubProtocol.requests.contains { $0.url == url })
+    }
+}
+
+private func uniqueProbeURL() -> URL {
+    URL(string: "https://\(UUID().uuidString).test/probe")!
 }
