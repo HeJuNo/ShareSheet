@@ -165,6 +165,17 @@ struct HomeView: View {
                 ScopeRow(scope: .type(type), count: model.counts.byType[type] ?? 0) { ItemTypeIcon(type) }
             }
         }
+        Section("Cleanup") {
+            NavigationLink {
+                DuplicateGroupsView()
+            } label: {
+                LabeledContent {
+                    Text(model.duplicateCopyCount, format: .number)
+                } label: {
+                    Label("Duplicates", systemImage: "doc.on.doc")
+                }
+            }
+        }
     }
 
     /// The search over all items, nil while the search field is empty.

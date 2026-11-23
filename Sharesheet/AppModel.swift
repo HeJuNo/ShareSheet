@@ -62,6 +62,8 @@ enum TrashSettings {
     private(set) var iCloudState = ICloudState.unknown
     var isICloudAvailable: Bool { iCloudState == .available }
     private(set) var counts = LibraryCounts()
+    /// Extra copies beyond one per canonical URL; the home screen's Cleanup row shows it.
+    private(set) var duplicateCopyCount = 0
     private(set) var collections: [CollectionPath] = []
     private(set) var tags: [String] = []
     private(set) var pendingCaptureCount = 0
@@ -260,6 +262,7 @@ enum TrashSettings {
             counts = try index.counts()
             tags = try index.allTags()
             let all = try index.search(LibraryQuery(scope: .all))
+            duplicateCopyCount = DuplicateFinder.extraCopyCount(all)
             pendingCaptureCount = all.filter { $0.capture == .pending }.count
             failedCaptureCount = all.filter { $0.capture == .failed }.count
         } catch {
@@ -417,6 +420,10 @@ enum TrashSettings {
             Self.log.error("Searching the index failed: \(error)")
             return []
         }
+    }
+
+    func duplicateGroups() -> [DuplicateGroup] {
+        DuplicateFinder.groups(items(LibraryQuery(scope: .all)))
     }
 
     /// One line per number field over the items of `query`, for the footer of a list: the aggregate the rules choose

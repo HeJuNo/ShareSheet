@@ -67,4 +67,23 @@ struct AppModelBatchTests {
         #expect(failed == [a.id])
         #expect(try await env.store.item(a.id).tags.isEmpty)
     }
+
+    @Test func duplicateCountAndGroupsFollowTheLibrary() async throws {
+        let env = try ModelEnv()
+        _ = try await env.store.create(ItemDraft(
+            type: .link, url: URL(string: "https://www.example.com/p/")!, title: "A",
+            created: Date(timeIntervalSince1970: 1)), in: .unsorted)
+        _ = try await env.store.create(ItemDraft(
+            type: .link, url: URL(string: "http://example.com/p")!, title: "B",
+            created: Date(timeIntervalSince1970: 2)), in: .unsorted)
+        _ = try await env.store.create(ItemDraft(
+            type: .link, url: URL(string: "https://example.com/other")!, title: "C",
+            created: Date(timeIntervalSince1970: 3)), in: .unsorted)
+        let model = env.model()
+        await model.refresh()
+
+        #expect(model.duplicateCopyCount == 1)
+        #expect(model.duplicateGroups().count == 1)
+        #expect(model.duplicateGroups().first?.items.map(\.title) == ["A", "B"])
+    }
 }
