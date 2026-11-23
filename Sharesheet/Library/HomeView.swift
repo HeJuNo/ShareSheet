@@ -175,6 +175,15 @@ struct HomeView: View {
                     Label("Duplicates", systemImage: "doc.on.doc")
                 }
             }
+            NavigationLink {
+                BrokenLinksView()
+            } label: {
+                LabeledContent {
+                    Text(model.counts.brokenLinks, format: .number)
+                } label: {
+                    Label("Broken links", systemImage: "link")
+                }
+            }
         }
     }
 
