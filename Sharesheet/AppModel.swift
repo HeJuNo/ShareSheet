@@ -95,6 +95,7 @@ enum TrashSettings {
     @ObservationIgnored private var captureRequested = false
     @ObservationIgnored private let analyzer: DocumentAnalyzer?
     @ObservationIgnored private let sessionCheck: SessionCheck?
+    @ObservationIgnored private let linkCheck: (@Sendable (URL) async -> LinkCheckResult)?
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let isForeground: @Sendable () async -> Bool
     /// Which aggregate the list footer shows per field name, by the rules; see `fieldStats`.
@@ -112,7 +113,9 @@ enum TrashSettings {
     init(
         storeFactory: @escaping () async -> (any ItemStore)?, index: LibraryIndex, inbox: Inbox,
         runner: CaptureRunner?, extensionTemporaryRoot: URL? = nil,
-        analyzer: DocumentAnalyzer? = nil, sessionCheck: SessionCheck? = nil, defaults: UserDefaults = .standard,
+        analyzer: DocumentAnalyzer? = nil, sessionCheck: SessionCheck? = nil,
+        linkCheck: (@Sendable (URL) async -> LinkCheckResult)? = nil,
+        defaults: UserDefaults = .standard,
         isForeground: @escaping @Sendable () async -> Bool = { true },
         redirects: MoveRedirects = MoveRedirects(), rulesStatus: RulesStatus = RulesStatus(),
         ruleApplier: RuleApplier? = nil, rulesRoot: @escaping () async -> URL? = { await ICloudLocator.libraryRoot() }
@@ -124,6 +127,7 @@ enum TrashSettings {
         self.isForeground = isForeground
         self.analyzer = analyzer
         self.sessionCheck = sessionCheck
+        self.linkCheck = linkCheck
         self.defaults = defaults
         self.storeFactory = storeFactory
         self.index = index
@@ -171,6 +175,55 @@ enum TrashSettings {
     /// Checks the stored account sessions; called from the background task before capturing.
     func checkSessions() async {
         await sessionCheck?.run()
+    }
+
+    /// Checks stale links one by one until the batch or the time budget ends; returns the count.
+    @discardableResult
+    func checkLinks(limit: Int, olderThan: TimeInterval, timeBudget: TimeInterval) async -> Int {
+        guard let linkCheck else { return 0 }
+        let cutoff = Date().addingTimeInterval(-olderThan)
+        guard let urls = try? index.linksToCheck(limit: limit, checkedBefore: cutoff) else { return 0 }
+        let deadline = Date().addingTimeInterval(timeBudget)
+        var checked = 0
+        for url in urls {
+            guard Date() < deadline else { break }
+            let result = await linkCheck(url)
+            try? index.recordLinkCheck(result, for: url, checked: Date())
+            checked += 1
+        }
+        if checked > 0 { reloadFromIndex() }
+        return checked
+    }
+
+    /// The background task's small daily batch; at most one run per 24 hours.
+    @discardableResult
+    func checkLinksInBackground(now: Date = Date()) async -> Int {
+        let key = "linkCheck.lastRun"
+        if let last = defaults.object(forKey: key) as? Date,
+           now.timeIntervalSince(last) < 86_400 {
+            return 0
+        }
+        let count = await checkLinks(limit: 25, olderThan: 7 * 86_400, timeBudget: 30)
+        if count > 0 { defaults.set(now, forKey: key) }
+        return count
+    }
+
+    /// The Broken links screen's manual run.
+    @discardableResult
+    func checkLinksNow() async -> Int {
+        await checkLinks(limit: 100, olderThan: 3600, timeBudget: 60)
+    }
+
+    /// Rechecks one URL regardless of the stale window.
+    func recheckLink(_ url: URL) async {
+        guard let linkCheck else { return }
+        let result = await linkCheck(url)
+        try? index.recordLinkCheck(result, for: url, checked: Date())
+        reloadFromIndex()
+    }
+
+    func brokenLinks() -> [BrokenLink] {
+        (try? index.brokenLinks()) ?? []
     }
 
     /// Returns when the analysis run that is going (if any) has ended.
@@ -820,6 +873,7 @@ extension AppModel {
             .init(id: "x", name: "X", validate: { await xMedia.validateSession() }),
             .init(id: "facebook", name: "Facebook", validate: { await facebookMedia.validateSession() }),
         ])
+        let linkChecker = LinkChecker()
         let socialMedia: @Sendable (URL) async -> MediaDownload? = { url in
             switch SocialEmbed.platform(of: url) {
             case .instagram: await instagramMedia.download(for: url)
@@ -843,7 +897,8 @@ extension AppModel {
         return AppModel(
             storeFactory: { await library.resolve() }, index: index, inbox: inbox, runner: runner,
             extensionTemporaryRoot: AppGroup.containerURL()?.appending(path: AppGroup.temporaryFolderName, directoryHint: .isDirectory),
-            analyzer: analyzer, sessionCheck: sessionCheck, isForeground: isForeground,
+            analyzer: analyzer, sessionCheck: sessionCheck,
+            linkCheck: { await linkChecker.check($0) }, isForeground: isForeground,
             redirects: redirects, rulesStatus: rulesStatus, ruleApplier: rules)
     }
 
