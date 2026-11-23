@@ -16,6 +16,7 @@ struct SharesheetApp: App {
             let model = await AppModel.shared
             await model.checkSessions()
             await model.refreshAndCapture()
+            await model.checkLinksInBackground()
             if await model.pendingCaptureCount > 0 { BackgroundCapture.schedule() }
             // The app may have come to the foreground meanwhile; then the scene keeps the index running.
             if await UIApplication.shared.applicationState != .active { LibraryIndex.suspend() }
