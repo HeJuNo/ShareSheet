@@ -131,7 +131,10 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .sheet(item: $loginService) { service in
-                service.loginView { signedIn[service] = true }
+                service.loginView {
+                    signedIn[service] = true
+                    Task { await SessionCheck.requestAuthorizationIfNeeded() }
+                }
             }
             .confirmationDialog(
                 "Sign out of \(confirmingSignOut?.name ?? "")?",

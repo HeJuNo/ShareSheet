@@ -94,6 +94,7 @@ enum TrashSettings {
     @ObservationIgnored private var captureTask: Task<Void, Never>?
     @ObservationIgnored private var captureRequested = false
     @ObservationIgnored private let analyzer: DocumentAnalyzer?
+    @ObservationIgnored private let sessionCheck: SessionCheck?
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let isForeground: @Sendable () async -> Bool
     /// Which aggregate the list footer shows per field name, by the rules; see `fieldStats`.
@@ -111,7 +112,7 @@ enum TrashSettings {
     init(
         storeFactory: @escaping () async -> (any ItemStore)?, index: LibraryIndex, inbox: Inbox,
         runner: CaptureRunner?, extensionTemporaryRoot: URL? = nil,
-        analyzer: DocumentAnalyzer? = nil, defaults: UserDefaults = .standard,
+        analyzer: DocumentAnalyzer? = nil, sessionCheck: SessionCheck? = nil, defaults: UserDefaults = .standard,
         isForeground: @escaping @Sendable () async -> Bool = { true },
         redirects: MoveRedirects = MoveRedirects(), rulesStatus: RulesStatus = RulesStatus(),
         ruleApplier: RuleApplier? = nil, rulesRoot: @escaping () async -> URL? = { await ICloudLocator.libraryRoot() }
@@ -122,6 +123,7 @@ enum TrashSettings {
         self.rulesStatus = rulesStatus
         self.isForeground = isForeground
         self.analyzer = analyzer
+        self.sessionCheck = sessionCheck
         self.defaults = defaults
         self.storeFactory = storeFactory
         self.index = index
@@ -164,6 +166,11 @@ enum TrashSettings {
         if let task = captureTask {
             await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
         }
+    }
+
+    /// Checks the stored account sessions; called from the background task before capturing.
+    func checkSessions() async {
+        await sessionCheck?.run()
     }
 
     /// Returns when the analysis run that is going (if any) has ended.
@@ -808,6 +815,11 @@ extension AppModel {
         let facebookMedia = FacebookMediaLoader(
             diagnostics: { report in await Self.writeMediaDiagnostic(report, prefix: "facebook-media") },
             session: { WebSessionStore.facebook.load() })
+        let sessionCheck = SessionCheck(probes: [
+            .init(id: "instagram", name: "Instagram", validate: { await instagramMedia.validateSession() }),
+            .init(id: "x", name: "X", validate: { await xMedia.validateSession() }),
+            .init(id: "facebook", name: "Facebook", validate: { await facebookMedia.validateSession() }),
+        ])
         let socialMedia: @Sendable (URL) async -> MediaDownload? = { url in
             switch SocialEmbed.platform(of: url) {
             case .instagram: await instagramMedia.download(for: url)
@@ -831,7 +843,7 @@ extension AppModel {
         return AppModel(
             storeFactory: { await library.resolve() }, index: index, inbox: inbox, runner: runner,
             extensionTemporaryRoot: AppGroup.containerURL()?.appending(path: AppGroup.temporaryFolderName, directoryHint: .isDirectory),
-            analyzer: analyzer, isForeground: isForeground,
+            analyzer: analyzer, sessionCheck: sessionCheck, isForeground: isForeground,
             redirects: redirects, rulesStatus: rulesStatus, ruleApplier: rules)
     }
 

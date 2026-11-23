@@ -14,6 +14,7 @@ struct SharesheetApp: App {
         BackgroundCapture.register {
             LibraryIndex.resume()
             let model = await AppModel.shared
+            await model.checkSessions()
             await model.refreshAndCapture()
             if await model.pendingCaptureCount > 0 { BackgroundCapture.schedule() }
             // The app may have come to the foreground meanwhile; then the scene keeps the index running.
@@ -25,7 +26,10 @@ struct SharesheetApp: App {
         WindowGroup {
             HomeView()
                 .environment(model)
-                .task { await model.refresh() }
+                .task {
+                    await SessionCheck.requestAuthorizationIfNeeded()
+                    await model.refresh()
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
