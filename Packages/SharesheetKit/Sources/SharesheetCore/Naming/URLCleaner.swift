@@ -18,6 +18,33 @@ public enum URLCleaner {
         return components.url ?? url
     }
 
+    /// The form two links must share to count as duplicates: scheme, leading `www.`, a trailing
+    /// slash, tracking parameters and the fragment are gone; path case and the other query items stay.
+    public static func canonical(_ url: URL) -> String? {
+        guard url.isWebPage, let host = url.host(), !host.isEmpty,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return nil }
+        var normalizedHost = host.lowercased()
+        if normalizedHost.hasPrefix("www.") { normalizedHost.removeFirst(4) }
+        guard !normalizedHost.isEmpty else { return nil }
+
+        var path = components.percentEncodedPath
+        while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
+        if path == "/" { path = "" }
+
+        var result = normalizedHost
+        if let port = components.port { result += ":\(port)" }
+        result += path
+
+        let kept = (components.percentEncodedQueryItems ?? []).filter { !isTracking($0.name) }
+        if !kept.isEmpty {
+            var query = URLComponents()
+            query.percentEncodedQueryItems = kept
+            if let encoded = query.percentEncodedQuery, !encoded.isEmpty { result += "?" + encoded }
+        }
+        return result
+    }
+
     private static func isTracking(_ name: String) -> Bool {
         let lowered = name.lowercased()
         return lowered.hasPrefix("utm_") || trackingNames.contains(lowered)

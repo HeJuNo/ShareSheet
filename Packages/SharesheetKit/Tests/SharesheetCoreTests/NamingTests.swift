@@ -8,6 +8,22 @@ import UniformTypeIdentifiers
     #expect(URLCleaner.clean(URL(string: "https://a.b/p?UTM_Medium=1")!).absoluteString == "https://a.b/p")
     #expect(URLCleaner.clean(URL(string: "https://a.b/p#frag")!).absoluteString == "https://a.b/p#frag")
 }
+@Test func canonicalURLsIgnoreSchemeWWWSlashFragmentAndTracking() {
+    #expect(URLCleaner.canonical(URL(string: "http://www.Example.com/a/b/?utm_source=x&id=7#top")!)
+        == "example.com/a/b?id=7")
+    #expect(URLCleaner.canonical(URL(string: "https://example.com/a/b")!) == "example.com/a/b")
+    #expect(URLCleaner.canonical(URL(string: "https://example.com/")!) == "example.com")
+}
+@Test func canonicalURLsKeepPathCaseAndQueryOrder() {
+    #expect(URLCleaner.canonical(URL(string: "https://example.com/A")!) == "example.com/A")
+    #expect(URLCleaner.canonical(URL(string: "https://example.com/p?id=1&sort=2")!)
+        != URLCleaner.canonical(URL(string: "https://example.com/p?sort=2&id=1")!))
+}
+@Test func canonicalURLsRejectNonWebLinks() {
+    #expect(URLCleaner.canonical(URL(string: "mailto:a@b.c")!) == nil)
+    #expect(URLCleaner.canonical(URL(string: "file:///tmp/x")!) == nil)
+    #expect(URLCleaner.canonical(URL(string: "https:///nohost")!) == nil)
+}
 @Test func presetsTypes() {
     #expect(ItemType.preset(for: URL(string: "https://youtu.be/abc")!) == .video)
     #expect(ItemType.preset(for: URL(string: "https://github.com/x")!) == .link)
