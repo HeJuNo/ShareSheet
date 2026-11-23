@@ -190,6 +190,12 @@ struct FacebookMediaLoaderTests {
         #expect(await loader(session: signedInSession()).validateSession(probeURL: url) == .unknown)
     }
 
+    @Test func validateSessionReportsUnknownOnANonUTF8ServerError() async {
+        let url = uniqueProbeURL()
+        StubProtocol.serve(url.absoluteString, .init(status: 500, body: Data([0xFF, 0xFE])))
+        #expect(await loader(session: signedInSession()).validateSession(probeURL: url) == .unknown)
+    }
+
     @Test func validateSessionReportsUnknownWhenTheRequestFails() async {
         #expect(await loader(session: signedInSession())
             .validateSession(probeURL: uniqueProbeURL()) == .unknown)

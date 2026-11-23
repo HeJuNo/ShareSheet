@@ -47,7 +47,18 @@ struct SessionCheck {
         "sessionCheck.notified.\(id)"
     }
 
+    /// A request can be accepted while the app may not present it; the marker must then stay
+    /// unset so the next background run reports it again.
+    static func canDeliver(_ status: UNAuthorizationStatus) -> Bool {
+        switch status {
+        case .authorized, .provisional, .ephemeral: true
+        default: false
+        }
+    }
+
     private static func deliverNotification(id: String, name: String) async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        guard canDeliver(await center.notificationSettings().authorizationStatus) else { return false }
         let content = UNMutableNotificationContent()
         content.title = "\(name) session expired"
         content.body = "Private posts need a new sign-in. Open Settings → Accounts."
@@ -55,7 +66,7 @@ struct SessionCheck {
         let request = UNNotificationRequest(
             identifier: "session-expired.\(id)", content: content, trigger: nil)
         do {
-            try await UNUserNotificationCenter.current().add(request)
+            try await center.add(request)
             return true
         } catch {
             return false

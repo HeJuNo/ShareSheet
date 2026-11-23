@@ -117,11 +117,13 @@ public struct FacebookMediaLoader: Sendable {
         guard let (data, response) = try? await urlSession.data(for: request),
               let http = response as? HTTPURLResponse
         else { return .unknown }
-        if http.statusCode == 401 || http.statusCode == 403
-            || Self.isLoginURL(response.url ?? probeURL) || Self.isLoginPage(data) {
+        let finalURL = response.url ?? probeURL
+        if http.statusCode == 401 || http.statusCode == 403 || Self.isLoginURL(finalURL) {
             return .expired
         }
-        return (200..<300).contains(http.statusCode) ? .valid : .unknown
+        guard (200..<300).contains(http.statusCode) else { return .unknown }
+        if Self.isLoginPage(data) { return .expired }
+        return .valid
     }
 
     private func fetch(

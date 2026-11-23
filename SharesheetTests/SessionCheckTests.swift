@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UserNotifications
 @testable import Sharesheet
 import SharesheetCore
 
@@ -97,5 +98,13 @@ struct SessionCheckTests {
         await check.run()
         #expect(delivery.calls == 2)
         #expect(defaults.bool(forKey: SessionCheck.notificationKey(for: "instagram")))
+    }
+
+    @Test func deliveryRequiresAuthorization() {
+        #expect(SessionCheck.canDeliver(.authorized))
+        #expect(SessionCheck.canDeliver(.provisional))
+        #expect(SessionCheck.canDeliver(.ephemeral))
+        #expect(!SessionCheck.canDeliver(.notDetermined))
+        #expect(!SessionCheck.canDeliver(.denied))
     }
 }
