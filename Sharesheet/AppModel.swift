@@ -426,6 +426,9 @@ enum TrashSettings {
         DuplicateFinder.groups(items(LibraryQuery(scope: .all)))
     }
 
+    /// The item's current ID after moves recorded in this session.
+    func current(_ id: ItemID) -> ItemID { redirects.current(id) }
+
     /// One line per number field over the items of `query`, for the footer of a list: the aggregate the rules choose
     /// for that field (the sum when none does), and how many items have it. `value` is nil when it has no result.
     func fieldStats(_ query: LibraryQuery) -> [FieldStat] {

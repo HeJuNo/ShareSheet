@@ -34,3 +34,31 @@ private func indexed(_ id: String, _ url: String, created: TimeInterval) -> Inde
     #expect(DuplicateFinder.groups(items).isEmpty)
     #expect(DuplicateFinder.extraCopyCount(items) == 0)
 }
+
+private func sampleGroup() throws -> DuplicateGroup {
+    let items = [
+        indexed("Unsorted/Old.md", "https://example.com/p", created: 1),
+        indexed("Unsorted/New.md", "http://www.example.com/p/", created: 2),
+    ]
+    return try #require(DuplicateFinder.groups(items).first)
+}
+
+@Test func keeperPrefersTheChosenItemWhenItIsInTheGroup() throws {
+    let group = try sampleGroup()
+    #expect(DuplicateFinder.keeper(in: group, chosen: group.items[1].id, currentID: group.items[1].id)
+        == group.items[1].id)
+}
+
+@Test func keeperFollowsARedirectIntoTheGroup() throws {
+    let group = try sampleGroup()
+    let old = group.items[0].id
+    let new = group.items[1].id
+    #expect(DuplicateFinder.keeper(in: group, chosen: old, currentID: new) == new)
+}
+
+@Test func keeperFallsBackToTheOldestWhenTheChosenItemIsGone() throws {
+    let group = try sampleGroup()
+    let gone = ItemID(relativePath: "Unsorted/Gone.md")
+    #expect(DuplicateFinder.keeper(in: group, chosen: gone, currentID: gone) == group.items[0].id)
+    #expect(DuplicateFinder.keeper(in: group, chosen: nil, currentID: nil) == group.items[0].id)
+}

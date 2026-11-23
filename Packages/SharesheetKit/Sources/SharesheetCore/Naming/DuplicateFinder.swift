@@ -30,4 +30,12 @@ public enum DuplicateFinder {
     public static func extraCopyCount(_ items: [IndexedItem]) -> Int {
         groups(items).reduce(0) { $0 + $1.items.count - 1 }
     }
+
+    /// The keeper for `group`: the chosen item after moves when it is still in the group, else the
+    /// oldest. Guards against a stored choice whose item was moved or deleted meanwhile.
+    public static func keeper(in group: DuplicateGroup, chosen: ItemID?, currentID: ItemID?) -> ItemID? {
+        guard let chosen else { return group.items.first?.id }
+        let resolved = currentID ?? chosen
+        return group.items.contains { $0.id == resolved } ? resolved : group.items.first?.id
+    }
 }

@@ -33,7 +33,7 @@ struct DuplicateGroupsView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityValue(Text(keeper(for: group) == item.id ? "Kept" : "Duplicate"))
                     }
-                    Button("Trash \(group.items.count - 1) duplicates", role: .destructive) {
+                    Button("Trash \(extras(in: group).count) duplicates", role: .destructive) {
                         trashExtras(of: group)
                     }
                 } header: {
@@ -55,12 +55,19 @@ struct DuplicateGroupsView: View {
     }
 
     private func keeper(for group: DuplicateGroup) -> ItemID? {
-        keepers[group.id] ?? group.items.first?.id
+        let chosen = keepers[group.id]
+        return DuplicateFinder.keeper(
+            in: group, chosen: chosen, currentID: chosen.map { model.current($0) })
+    }
+
+    private func extras(in group: DuplicateGroup) -> [ItemID] {
+        guard let keeper = keeper(for: group) else { return [] }
+        return group.items.map(\.id).filter { $0 != keeper }
     }
 
     private func trashExtras(of group: DuplicateGroup) {
-        guard let keeper = keeper(for: group) else { return }
-        let extras = group.items.map(\.id).filter { $0 != keeper }
+        let extras = extras(in: group)
+        guard !extras.isEmpty else { return }
         Task {
             let failed = await model.delete(extras)
             if failed.isEmpty {
