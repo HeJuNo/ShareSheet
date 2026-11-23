@@ -186,8 +186,10 @@ enum TrashSettings {
         let deadline = Date().addingTimeInterval(timeBudget)
         var checked = 0
         for url in urls {
-            guard Date() < deadline else { break }
+            guard !Task.isCancelled, Date() < deadline else { break }
             let result = await linkCheck(url)
+            // shortcut: one request may overrun the budget by its 15 s timeout; the batch is small.
+            guard !Task.isCancelled else { break }
             try? index.recordLinkCheck(result, for: url, checked: Date())
             checked += 1
         }
@@ -204,7 +206,7 @@ enum TrashSettings {
             return 0
         }
         let count = await checkLinks(limit: 25, olderThan: 7 * 86_400, timeBudget: 30)
-        if count > 0 { defaults.set(now, forKey: key) }
+        if count > 0, !Task.isCancelled { defaults.set(now, forKey: key) }
         return count
     }
 
@@ -223,7 +225,8 @@ enum TrashSettings {
     }
 
     func brokenLinks() -> [BrokenLink] {
-        (try? index.brokenLinks()) ?? []
+        _ = revision
+        return (try? index.brokenLinks()) ?? []
     }
 
     /// Returns when the analysis run that is going (if any) has ended.

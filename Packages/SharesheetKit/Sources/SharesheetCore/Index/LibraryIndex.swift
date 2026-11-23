@@ -220,6 +220,11 @@ public final class LibraryIndex: Sendable {
                 DELETE FROM analysis WHERE NOT EXISTS (
                     SELECT 1 FROM items WHERE items.file = analysis.source OR items.archive = analysis.source)
                 """)
+            // Checks for URLs no item carries any more (deleted or changed meanwhile).
+            try db.execute(sql: """
+                DELETE FROM link_checks WHERE url NOT IN (
+                    SELECT url FROM items WHERE url IS NOT NULL)
+                """)
         }
     }
 
@@ -548,14 +553,14 @@ public final class LibraryIndex: Sendable {
         }
     }
 
-    /// Distinct web URLs whose check is missing or older than `checkedBefore`, oldest URL first.
+    /// Distinct https URLs whose check is missing or older than `checkedBefore`, ordered by URL.
     public func linksToCheck(limit: Int, checkedBefore: Date) throws -> [URL] {
         try pool.read { db in
             let rows = try Row.fetchAll(db, sql: """
                 SELECT DISTINCT items.url AS url FROM items
                 LEFT JOIN link_checks ON link_checks.url = items.url
                 WHERE items.url IS NOT NULL
-                  AND (items.url LIKE 'http://%' OR items.url LIKE 'https://%')
+                  AND items.url LIKE 'https://%'
                   AND (link_checks.checked IS NULL OR link_checks.checked < ?)
                 ORDER BY items.url
                 LIMIT ?

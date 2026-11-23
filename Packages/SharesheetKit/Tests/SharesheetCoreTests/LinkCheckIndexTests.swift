@@ -56,6 +56,7 @@ import Testing
         let never = url("never")
         let fresh = url("fresh")
         let stale = url("stale")
+        let plain = URL(string: "http://a.test/plain")!
         let file = URL(string: "file:///tmp/x")!
         let index = try indexWith([
             .fixture(id: "Unsorted/A.md", url: never),
@@ -63,6 +64,7 @@ import Testing
             .fixture(id: "Unsorted/C.md", url: stale),
             .fixture(id: "Unsorted/D.md", url: file),
             .fixture(id: "Unsorted/E.md", url: never),
+            .fixture(id: "Unsorted/F.md", url: plain),
         ])
         try index.recordLinkCheck(.init(status: .ok, httpStatus: 200), for: fresh, checked: date(200))
         try index.recordLinkCheck(.init(status: .ok, httpStatus: 200), for: stale, checked: date(50))
@@ -70,5 +72,21 @@ import Testing
         let due = try index.linksToCheck(limit: 10, checkedBefore: date(100))
         #expect(due == [never, stale])
         #expect(try index.linksToCheck(limit: 1, checkedBefore: date(100)).count == 1)
+    }
+
+    @Test func replaceAllPrunesChecksForGoneURLs() throws {
+        let gone = url("gone")
+        let kept = url("kept")
+        let index = try indexWith([
+            .fixture(id: "Unsorted/A.md", url: gone),
+            .fixture(id: "Unsorted/B.md", url: kept),
+        ])
+        try index.recordLinkCheck(.init(status: .broken, httpStatus: 404), for: gone, checked: date(1))
+        try index.recordLinkCheck(.init(status: .broken, httpStatus: 404), for: kept, checked: date(1))
+
+        try index.replaceAll(with: [.fixture(id: "Unsorted/B.md", url: kept)])
+
+        #expect(try index.linkCheck(for: gone) == nil)
+        #expect(try index.linkCheck(for: kept) != nil)
     }
 }
