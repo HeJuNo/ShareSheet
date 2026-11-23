@@ -553,6 +553,43 @@ enum TrashSettings {
         lastDeleted = trashed.first
     }
 
+    /// Deletes each item; returns the IDs that could not be deleted. A bulk delete shows no
+    /// Undo banner; the Trash is the way back.
+    func delete(_ ids: [ItemID]) async -> [ItemID] {
+        var failed: [ItemID] = []
+        for id in ids {
+            do { try await delete(id) } catch { failed.append(id) }
+        }
+        lastDeleted = nil
+        return failed
+    }
+
+    /// Moves each item into `collection`; returns the IDs that could not be moved.
+    func move(_ ids: [ItemID], to collection: CollectionPath) async -> [ItemID] {
+        var failed: [ItemID] = []
+        for id in ids {
+            do { _ = try await move(id, to: collection) } catch { failed.append(id) }
+        }
+        return failed
+    }
+
+    /// Adds one tag to each item; returns the IDs that could not be changed. An unusable tag
+    /// fails for every ID and leaves every item untouched.
+    func addTag(_ tag: String, to ids: [ItemID]) async -> [ItemID] {
+        guard let resolved = TagCatalog.resolve(tag, among: (try? index.allTags()) ?? []) else { return ids }
+        var failed: [ItemID] = []
+        for id in ids {
+            do {
+                _ = try await modifyIndexed(id, failure: "Adding a tag failed") { item in
+                    if !TagCatalog.carries(item.tags, resolved) { item.tags.append(resolved) }
+                }
+            } catch {
+                failed.append(id)
+            }
+        }
+        return failed
+    }
+
     // MARK: Trash
 
     private var trashStore: (any TrashStore)? { store as? any TrashStore }
