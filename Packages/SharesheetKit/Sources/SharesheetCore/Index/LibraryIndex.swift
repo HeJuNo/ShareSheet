@@ -58,6 +58,7 @@ public struct IndexedItem: Identifiable, Equatable, Sendable {
 
 public struct LibraryCounts: Equatable, Sendable {
     public var all = 0, unsorted = 0, favorites = 0, highlights = 0
+    public var brokenLinks = 0
     public var byType: [ItemType: Int] = [:]
     /// Nested counts roll up into every ancestor.
     public var byCollection: [CollectionPath: Int] = [:]
@@ -193,6 +194,14 @@ public final class LibraryIndex: Sendable {
             }
             try db.create(index: "item_fields_item", on: "item_fields", columns: ["item_id"])
             try db.create(index: "item_fields_name", on: "item_fields", columns: ["name"])
+        }
+        migrator.registerMigration("v4") { db in
+            try db.create(table: "link_checks") { t in
+                t.primaryKey("url", .text)
+                t.column("status", .text).notNull()
+                t.column("http_status", .integer)
+                t.column("checked", .double).notNull()
+            }
         }
         return migrator
     }
@@ -399,24 +408,26 @@ public final class LibraryIndex: Sendable {
                 : " ORDER BY items.created DESC, items.id"
 
             let rows = try Row.fetchAll(db, sql: sql, arguments: args)
-            return try rows.map { row in
-                let id: String = row["id"]
-                let tags = try String.fetchAll(
-                    db, sql: "SELECT tag FROM item_tags WHERE item_id = ? ORDER BY position", arguments: [id])
-                return IndexedItem(
-                    id: ItemID(relativePath: id),
-                    type: ItemType(rawValue: row["type"]) ?? .link,
-                    title: row["title"],
-                    url: (row["url"] as String?).flatMap { URL(string: $0) },
-                    domain: row["domain"],
-                    file: row["file"],
-                    tags: tags,
-                    created: Date(timeIntervalSince1970: row["created"]),
-                    capture: (row["capture"] as String?).flatMap { CaptureState(rawValue: $0) },
-                    favorite: row["favorite"],
-                    hasHighlights: row["has_highlights"])
-            }
+            return try rows.map { try Self.indexedItem($0, db) }
         }
+    }
+
+    private static func indexedItem(_ row: Row, _ db: Database) throws -> IndexedItem {
+        let id: String = row["id"]
+        let tags = try String.fetchAll(
+            db, sql: "SELECT tag FROM item_tags WHERE item_id = ? ORDER BY position", arguments: [id])
+        return IndexedItem(
+            id: ItemID(relativePath: id),
+            type: ItemType(rawValue: row["type"]) ?? .link,
+            title: row["title"],
+            url: (row["url"] as String?).flatMap { URL(string: $0) },
+            domain: row["domain"],
+            file: row["file"],
+            tags: tags,
+            created: Date(timeIntervalSince1970: row["created"]),
+            capture: (row["capture"] as String?).flatMap { CaptureState(rawValue: $0) },
+            favorite: row["favorite"],
+            hasHighlights: row["has_highlights"])
     }
 
     /// The join, conditions and arguments that narrow `items` to a query; shared by `search` and `fieldValues`.
@@ -483,6 +494,10 @@ public final class LibraryIndex: Sendable {
                 """, arguments: [CollectionPath.unsorted.relativePath])!
             counts.all = row["n"]; counts.unsorted = row["u"]
             counts.favorites = row["f"]; counts.highlights = row["h"]
+            counts.brokenLinks = try Int.fetchOne(db, sql: """
+                SELECT COUNT(*) FROM items JOIN link_checks ON link_checks.url = items.url
+                WHERE link_checks.status = ?
+                """, arguments: [LinkStatus.broken.rawValue]) ?? 0
             for r in try Row.fetchAll(db, sql: "SELECT type, COUNT(*) AS n FROM items GROUP BY type") {
                 if let type = ItemType(rawValue: r["type"]) { counts.byType[type] = r["n"] }
             }
@@ -496,6 +511,79 @@ public final class LibraryIndex: Sendable {
                 }
             }
             return counts
+        }
+    }
+
+    /// Stores one check. `unknown` never replaces a known status, only the attempt date.
+    public func recordLinkCheck(_ result: LinkCheckResult, for url: URL, checked: Date) throws {
+        try pool.write { db in
+            let key = url.absoluteString
+            if result.status == .unknown,
+               try String.fetchOne(db, sql: "SELECT status FROM link_checks WHERE url = ?", arguments: [key]) != nil {
+                try db.execute(
+                    sql: "UPDATE link_checks SET checked = ? WHERE url = ?",
+                    arguments: [checked.timeIntervalSince1970, key])
+                return
+            }
+            try db.execute(sql: """
+                INSERT INTO link_checks (url, status, http_status, checked) VALUES (?, ?, ?, ?)
+                ON CONFLICT(url) DO UPDATE SET
+                    status = excluded.status,
+                    http_status = excluded.http_status,
+                    checked = excluded.checked
+                """, arguments: [key, result.status.rawValue, result.httpStatus, checked.timeIntervalSince1970])
+        }
+    }
+
+    public func linkCheck(for url: URL) throws -> StoredLinkCheck? {
+        try pool.read { db in
+            guard let row = try Row.fetchOne(
+                db, sql: "SELECT status, http_status, checked FROM link_checks WHERE url = ?",
+                arguments: [url.absoluteString]),
+                let status = LinkStatus(rawValue: row["status"])
+            else { return nil }
+            return StoredLinkCheck(
+                status: status, httpStatus: row["http_status"],
+                checked: Date(timeIntervalSince1970: row["checked"]))
+        }
+    }
+
+    /// Distinct web URLs whose check is missing or older than `checkedBefore`, oldest URL first.
+    public func linksToCheck(limit: Int, checkedBefore: Date) throws -> [URL] {
+        try pool.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT DISTINCT items.url AS url FROM items
+                LEFT JOIN link_checks ON link_checks.url = items.url
+                WHERE items.url IS NOT NULL
+                  AND (items.url LIKE 'http://%' OR items.url LIKE 'https://%')
+                  AND (link_checks.checked IS NULL OR link_checks.checked < ?)
+                ORDER BY items.url
+                LIMIT ?
+                """, arguments: [checkedBefore.timeIntervalSince1970, limit])
+            return rows.compactMap { row in
+                guard let string: String = row["url"] else { return nil }
+                return URL(string: string)
+            }
+        }
+    }
+
+    public func brokenLinks() throws -> [BrokenLink] {
+        try pool.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT items.*, link_checks.status AS check_status,
+                       link_checks.http_status AS check_http_status, link_checks.checked AS check_checked
+                FROM items JOIN link_checks ON link_checks.url = items.url
+                WHERE link_checks.status = ?
+                ORDER BY items.created DESC, items.id
+                """, arguments: [LinkStatus.broken.rawValue])
+            return try rows.map { row in
+                BrokenLink(
+                    item: try Self.indexedItem(row, db),
+                    check: StoredLinkCheck(
+                        status: LinkStatus(rawValue: row["check_status"]) ?? .unknown,
+                        httpStatus: row["check_http_status"],
+                        checked: Date(timeIntervalSince1970: row["check_checked"])))
+            }
         }
     }
 
