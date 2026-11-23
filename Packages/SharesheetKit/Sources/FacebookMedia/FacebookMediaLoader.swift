@@ -26,6 +26,8 @@ public struct FacebookMediaLoader: Sendable {
     private static let safariUserAgent =
         "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 
+    static let sessionProbeURL = URL(string: "https://m.facebook.com/me")!
+
     private let limits: Limits
     private let urlSession: URLSession
     private let diagnostics: Diagnostics?
@@ -93,6 +95,33 @@ public struct FacebookMediaLoader: Sendable {
             return nil
         }
         return await download(media: media, caption: caption, postURL: postURL, cookieHeader: nil)
+    }
+
+    /// Checks whether Facebook still accepts the stored session; never changes it.
+    public func validateSession() async -> SessionStatus {
+        await validateSession(probeURL: Self.sessionProbeURL)
+    }
+
+    /// Test seam; production uses `sessionProbeURL`.
+    func validateSession(probeURL: URL) async -> SessionStatus {
+        guard let session = sessionProvider?() else { return .noSession }
+        guard session.isUsable(requiredCookie: "c_user") else { return .expired }
+
+        var request = URLRequest(url: probeURL)
+        request.timeoutInterval = min(15, limits.fileTimeout)
+        request.setValue(session.cookieHeader, forHTTPHeaderField: "Cookie")
+        request.setValue(Self.safariUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
+        request.setValue("https://m.facebook.com/", forHTTPHeaderField: "Referer")
+
+        guard let (data, response) = try? await urlSession.data(for: request),
+              let http = response as? HTTPURLResponse
+        else { return .unknown }
+        if http.statusCode == 401 || http.statusCode == 403
+            || Self.isLoginURL(response.url ?? probeURL) || Self.isLoginPage(data) {
+            return .expired
+        }
+        return (200..<300).contains(http.statusCode) ? .valid : .unknown
     }
 
     private func fetch(
